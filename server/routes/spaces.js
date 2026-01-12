@@ -128,15 +128,28 @@ router.get('/:spaceId', authenticate, async (req, res) => {
     
     // 非管理员只能看到有权限的文件
     if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
-      filesSql += ` AND (f.created_by = ? OR EXISTS (
-        SELECT 1 FROM permissions p
-        WHERE p.resource_type = 'file'
-        AND p.resource_id = f.id
-        AND (p.user_id = ? OR p.group_id IN (
-          SELECT group_id FROM user_group_members WHERE user_id = ?
-        ))
-      ))`;
-      filesParams.push(req.user.id, req.user.id, req.user.id);
+      // 如果用户有空间权限，可以看到空间中的所有文件
+      // 否则只能看到自己创建的文件或有文件级权限的文件
+      filesSql += ` AND (
+        f.created_by = ? OR 
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'file'
+          AND p.resource_id = f.id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'space'
+          AND p.resource_id = ?
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        )
+      )`;
+      filesParams.push(req.user.id, req.user.id, req.user.id, spaceId, req.user.id, req.user.id);
     }
     
     filesSql += ` ORDER BY f.updated_at DESC LIMIT 50`;
@@ -666,15 +679,30 @@ router.get('/:spaceId/folders/:folderId/files', authenticate, async (req, res) =
     
     // 非管理员只能看到有权限的文件
     if (req.user.role !== 'admin') {
-      sql += ` AND (f.created_by = ? OR EXISTS (
-        SELECT 1 FROM permissions p
-        WHERE p.resource_type = 'file'
-        AND p.resource_id = f.id
-        AND (p.user_id = ? OR p.group_id IN (
-          SELECT group_id FROM user_group_members WHERE user_id = ?
-        ))
-      ))`;
-      params.push(req.user.id, req.user.id, req.user.id);
+      // 检查空间权限
+      const space = await db.get('SELECT * FROM spaces WHERE id = ?', [spaceId]);
+      if (space && space.owner_id !== req.user.id) {
+        sql += ` AND (
+          f.created_by = ? OR 
+          EXISTS (
+            SELECT 1 FROM permissions p
+            WHERE p.resource_type = 'file'
+            AND p.resource_id = f.id
+            AND (p.user_id = ? OR p.group_id IN (
+              SELECT group_id FROM user_group_members WHERE user_id = ?
+            ))
+          ) OR
+          EXISTS (
+            SELECT 1 FROM permissions p
+            WHERE p.resource_type = 'space'
+            AND p.resource_id = ?
+            AND (p.user_id = ? OR p.group_id IN (
+              SELECT group_id FROM user_group_members WHERE user_id = ?
+            ))
+          )
+        )`;
+        params.push(req.user.id, req.user.id, req.user.id, spaceId, req.user.id, req.user.id);
+      }
     }
     
     sql += ` ORDER BY f.updated_at DESC`;

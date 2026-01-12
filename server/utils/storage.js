@@ -103,8 +103,7 @@ async function validateStoragePath(storagePath) {
       valid: true,
       message: '存储路径验证通过',
       writable: true,
-      path: normalizedPath,
-      availableSpace
+      path: normalizedPath
     };
   } catch (error) {
     return {

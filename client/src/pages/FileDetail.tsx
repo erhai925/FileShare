@@ -27,6 +27,42 @@ import api from '../services/api'
 import { useAuthStore } from '../stores/authStore'
 import FilePreview from '../components/FilePreview'
 
+// 下载文件的辅助函数
+const downloadFile = async (fileId: string, fileName: string) => {
+  try {
+    const token = useAuthStore.getState().token
+    if (!token) {
+      message.error('未登录，请先登录')
+      return
+    }
+    
+    const response = await fetch(`/api/files/download/${fileId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.message || '下载失败')
+    }
+    
+    const blob = await response.blob()
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName || 'download'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+    message.success('文件下载开始')
+  } catch (error: any) {
+    console.error('下载失败:', error)
+    message.error(error.message || '下载失败')
+  }
+}
+
 const { TextArea } = Input
 const { Text } = Typography
 
@@ -40,12 +76,18 @@ export default function FileDetail() {
   const [previewVisible, setPreviewVisible] = useState(false)
 
   // 获取文件详情
-  const { data: fileData, isLoading } = useQuery({
+  const { data: fileData, isLoading, error: fileError } = useQuery({
     queryKey: ['file', fileId],
     queryFn: () => api.get(`/files/${fileId}`)
   })
 
-  const file = fileData?.data?.data
+  console.log('FileDetail - fileId:', fileId)
+  console.log('FileDetail - fileData:', fileData)
+  console.log('FileDetail - fileError:', fileError)
+
+  // API 拦截器返回 response.data，后端返回 { success: true, data: {...} }
+  // 所以 fileData 已经是 { success: true, data: {...} }，需要访问 fileData.data
+  const file = fileData?.data
 
   // 获取评论列表
   const { data: commentsData, refetch: refetchComments } = useQuery({
@@ -208,7 +250,7 @@ export default function FileDetail() {
         </Button>
         <Button 
           icon={<DownloadOutlined />} 
-          onClick={() => window.open(`/api/files/download/${fileId}`, '_blank')}
+          onClick={() => downloadFile(fileId!, file.original_name)}
         >
           下载
         </Button>

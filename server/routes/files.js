@@ -338,8 +338,31 @@ router.get('/download/:fileId', authenticate, async (req, res) => {
     }
     
     // 检查权限
-    const hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    console.log('下载文件 - 文件级权限检查结果:', hasPermission);
+    
+    // 如果文件级权限检查失败，检查空间权限
     if (!hasPermission) {
+      const file = await db.get('SELECT space_id FROM files WHERE id = ?', [fileId]);
+      if (file && file.space_id) {
+        console.log('下载文件 - 检查空间权限, space_id:', file.space_id);
+        hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
+        console.log('下载文件 - 空间权限检查结果:', hasPermission);
+        
+        // 如果用户是空间所有者，也应该有权限
+        if (!hasPermission) {
+          const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+          if (space && space.owner_id === req.user.id) {
+            hasPermission = true;
+            console.log('下载文件 - 用户是空间所有者，授予权限');
+          }
+        }
+      }
+    }
+    
+    console.log('下载文件 - 最终权限检查结果:', hasPermission);
+    if (!hasPermission) {
+      console.log('下载文件 - 无权限访问');
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     
@@ -415,15 +438,31 @@ router.get('/list', authenticate, async (req, res) => {
     
     // 非管理员只能看到自己上传的文件或有权限的文件
     if (req.user.role !== 'admin') {
-      sql += ` AND (f.created_by = ? OR EXISTS (
-        SELECT 1 FROM permissions p
-        WHERE p.resource_type = 'file'
-        AND p.resource_id = f.id
-        AND (p.user_id = ? OR p.group_id IN (
-          SELECT group_id FROM user_group_members WHERE user_id = ?
-        ))
-      ))`;
-      params.push(req.user.id, req.user.id, req.user.id);
+      sql += ` AND (
+        f.created_by = ? OR 
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'file'
+          AND p.resource_id = f.id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'space'
+          AND p.resource_id = f.space_id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM spaces s
+          WHERE s.id = f.space_id
+          AND s.owner_id = ?
+        )
+      )`;
+      params.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
     }
     
     // 关键词搜索（文件名）
@@ -454,15 +493,31 @@ router.get('/list', authenticate, async (req, res) => {
     
     // 非管理员只能看到自己上传的文件或有权限的文件
     if (req.user.role !== 'admin') {
-      countSql += ` AND (f.created_by = ? OR EXISTS (
-        SELECT 1 FROM permissions p
-        WHERE p.resource_type = 'file'
-        AND p.resource_id = f.id
-        AND (p.user_id = ? OR p.group_id IN (
-          SELECT group_id FROM user_group_members WHERE user_id = ?
-        ))
-      ))`;
-      countParams.push(req.user.id, req.user.id, req.user.id);
+      countSql += ` AND (
+        f.created_by = ? OR 
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'file'
+          AND p.resource_id = f.id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'space'
+          AND p.resource_id = f.space_id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM spaces s
+          WHERE s.id = f.space_id
+          AND s.owner_id = ?
+        )
+      )`;
+      countParams.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
     }
     
     // 关键词搜索（文件名）
@@ -821,10 +876,171 @@ router.patch('/:fileId/rename', authenticate, async (req, res) => {
   }
 });
 
+// ==================== 新文件通知相关API ====================
+
+// 获取最近一周更新的文件（用于通知）
+router.get('/recent-updates', authenticate, async (req, res) => {
+  try {
+    // 计算一周前的时间
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const oneWeekAgoStr = oneWeekAgo.toISOString().slice(0, 19).replace('T', ' ');
+    
+    let sql = `SELECT f.*, 
+      u1.username as creator_name, 
+      u2.username as updater_name,
+      s.name as space_name
+      FROM files f
+      LEFT JOIN users u1 ON f.created_by = u1.id
+      LEFT JOIN users u2 ON f.updated_by = u2.id
+      LEFT JOIN spaces s ON f.space_id = s.id
+      WHERE f.deleted_at IS NULL
+      AND f.updated_at >= ?`;
+    const params = [oneWeekAgoStr];
+    
+    // 非管理员只能看到自己上传的文件或有权限的文件
+    if (req.user.role !== 'admin') {
+      sql += ` AND (
+        f.created_by = ? OR 
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'file'
+          AND p.resource_id = f.id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'space'
+          AND p.resource_id = f.space_id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM spaces s
+          WHERE s.id = f.space_id
+          AND s.owner_id = ?
+        )
+      )`;
+      params.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+    }
+    
+    // 排除自己更新的文件（只显示团队成员更新的文件）
+    sql += ` AND f.updated_by != ?`;
+    params.push(req.user.id);
+    
+    // 只返回真正更新的文件（排除新上传的文件，即 created_at 和 updated_at 相同的文件）
+    // 或者有多个版本的文件（表示被更新过）
+    sql += ` AND (f.created_at != f.updated_at OR EXISTS (
+      SELECT 1 FROM file_versions fv
+      WHERE fv.file_id = f.id
+      AND fv.version > 1
+    ))`;
+    
+    sql += ` ORDER BY f.updated_at DESC LIMIT 20`;
+    
+    const files = await db.query(sql, params);
+    
+    res.json({
+      success: true,
+      data: {
+        files,
+        count: files.length
+      }
+    });
+  } catch (error) {
+    console.error('获取最近更新文件失败:', error);
+    res.status(500).json({ success: false, message: '获取最近更新文件失败' });
+  }
+});
+
+// 获取最近一周的新文件（包括新上传和更新的，用于工作台标记）
+router.get('/recent-files', authenticate, async (req, res) => {
+  try {
+    // 计算一周前的时间
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const oneWeekAgoStr = oneWeekAgo.toISOString().slice(0, 19).replace('T', ' ');
+    
+    let sql = `SELECT f.id, f.name, f.original_name, f.folder_id, f.space_id, f.file_path, 
+      f.file_size, f.mime_type, f.hash, f.version, f.created_by, f.updated_by,
+      f.created_at, f.updated_at, f.deleted_at,
+      u1.username as creator_name, 
+      u2.username as updater_name,
+      s.name as space_name
+      FROM files f
+      LEFT JOIN users u1 ON f.created_by = u1.id
+      LEFT JOIN users u2 ON f.updated_by = u2.id
+      LEFT JOIN spaces s ON f.space_id = s.id
+      WHERE f.deleted_at IS NULL
+      AND (f.created_at >= ? OR f.updated_at >= ?)`;
+    const params = [oneWeekAgoStr, oneWeekAgoStr];
+    
+    console.log('获取最近新文件 - 一周前时间:', oneWeekAgoStr);
+    console.log('获取最近新文件 - 用户ID:', req.user.id);
+    
+    // 非管理员只能看到自己上传的文件或有权限的文件
+    if (req.user.role !== 'admin') {
+      sql += ` AND (
+        f.created_by = ? OR 
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'file'
+          AND p.resource_id = f.id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'space'
+          AND p.resource_id = f.space_id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM spaces s
+          WHERE s.id = f.space_id
+          AND s.owner_id = ?
+        )
+      )`;
+      params.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+    }
+    
+    sql += ` ORDER BY f.updated_at DESC, f.created_at DESC LIMIT 50`;
+    
+    console.log('获取最近新文件 - SQL:', sql);
+    console.log('获取最近新文件 - 参数:', params);
+    
+    const files = await db.query(sql, params);
+    
+    console.log('获取最近新文件 - 查询结果数量:', files.length);
+    if (files.length > 0) {
+      console.log('获取最近新文件 - 第一个文件:', JSON.stringify(files[0], null, 2));
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        files,
+        count: files.length
+      }
+    });
+  } catch (error) {
+    console.error('获取最近新文件失败:', error);
+    res.status(500).json({ success: false, message: '获取最近新文件失败' });
+  }
+});
+
 // 获取文件信息
 router.get('/:fileId', authenticate, async (req, res) => {
   try {
     const { fileId } = req.params;
+    
+    console.log('获取文件详情 - fileId:', fileId, '类型:', typeof fileId, '用户ID:', req.user.id);
     
     const file = await db.get(
       `SELECT f.*, 
@@ -837,13 +1053,35 @@ router.get('/:fileId', authenticate, async (req, res) => {
       [fileId]
     );
     
+    console.log('获取文件详情 - 查询结果:', file ? '找到文件' : '文件不存在');
+    
     if (!file) {
       return res.status(404).json({ success: false, message: '文件不存在' });
     }
     
     // 检查权限
-    const hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    console.log('获取文件详情 - 文件级权限检查结果:', hasPermission);
+    
+    // 如果文件级权限检查失败，检查空间权限
+    if (!hasPermission && file.space_id) {
+      console.log('获取文件详情 - 检查空间权限, space_id:', file.space_id);
+      hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
+      console.log('获取文件详情 - 空间权限检查结果:', hasPermission);
+      
+      // 如果用户是空间所有者，也应该有权限
+      if (!hasPermission) {
+        const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+        if (space && space.owner_id === req.user.id) {
+          hasPermission = true;
+          console.log('获取文件详情 - 用户是空间所有者，授予权限');
+        }
+      }
+    }
+    
+    console.log('获取文件详情 - 最终权限检查结果:', hasPermission);
     if (!hasPermission) {
+      console.log('获取文件详情 - 无权限访问');
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     
@@ -1278,8 +1516,28 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     }
     
     // 检查权限
-    const hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    console.log('预览文件 - 文件级权限检查结果:', hasPermission);
+    
+    // 如果文件级权限检查失败，检查空间权限
+    if (!hasPermission && file.space_id) {
+      console.log('预览文件 - 检查空间权限, space_id:', file.space_id);
+      hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
+      console.log('预览文件 - 空间权限检查结果:', hasPermission);
+      
+      // 如果用户是空间所有者，也应该有权限
+      if (!hasPermission) {
+        const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+        if (space && space.owner_id === req.user.id) {
+          hasPermission = true;
+          console.log('预览文件 - 用户是空间所有者，授予权限');
+        }
+      }
+    }
+    
+    console.log('预览文件 - 最终权限检查结果:', hasPermission);
     if (!hasPermission) {
+      console.log('预览文件 - 无权限访问');
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     
@@ -1376,17 +1634,51 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
       return;
     }
     
-    // 对于Office文档，返回提示信息（后续可以集成转换服务）
+    // 对于Office文档，创建临时预览URL并使用在线预览服务
     if (isOffice) {
-      // 返回一个JSON响应，提示前端需要下载或使用在线预览服务
+      // 生成临时预览token（有效期1小时）
+      const previewToken = require('../utils/encryption').generateToken(32);
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1小时后过期
+      
+      // 将临时token存储到数据库或内存（这里使用简单的内存存储）
+      // 实际生产环境应该使用Redis或数据库
+      if (!global.previewTokens) {
+        global.previewTokens = new Map();
+      }
+      global.previewTokens.set(previewToken, {
+        fileId: file.id,
+        expiresAt: expiresAt.getTime()
+      });
+      
+      // 清理过期的token（简单清理，实际应该用定时任务）
+      setTimeout(() => {
+        if (global.previewTokens) {
+          global.previewTokens.delete(previewToken);
+        }
+      }, 60 * 60 * 1000);
+      
+      // 获取服务器地址（从请求头推断）
+      const protocol = req.protocol || 'http';
+      const host = req.get('host') || 'localhost:3000';
+      const baseUrl = `${protocol}://${host}`;
+      
+      // 创建临时预览URL
+      const previewUrl = `${baseUrl}/api/files/preview-public/${previewToken}`;
+      
+      // 返回预览信息，前端可以使用 Google Docs Viewer 或 Microsoft Office Online Viewer
       res.json({
         success: true,
         data: {
           fileId: file.id,
           fileName: file.original_name,
           mimeType: mimeType,
-          previewable: false,
-          message: 'Office文档需要下载后查看，或使用在线预览服务',
+          previewable: true,
+          previewType: 'office',
+          previewUrl: previewUrl,
+          // Google Docs Viewer URL
+          googleDocsViewerUrl: `https://docs.google.com/viewer?url=${encodeURIComponent(previewUrl)}&embedded=true`,
+          // Microsoft Office Online Viewer URL
+          officeViewerUrl: `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`,
           downloadUrl: `/api/files/download/${fileId}`
         }
       });
@@ -1408,6 +1700,99 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
   } catch (error) {
     console.error('预览文件失败:', error);
     res.status(500).json({ success: false, message: '预览文件失败: ' + error.message });
+  }
+});
+
+// 公开预览URL（用于在线预览服务）
+router.get('/preview-public/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    // 从内存中获取token信息
+    if (!global.previewTokens || !global.previewTokens.has(token)) {
+      return res.status(404).json({ success: false, message: '预览链接不存在或已过期' });
+    }
+    
+    const tokenInfo = global.previewTokens.get(token);
+    
+    // 检查是否过期
+    if (Date.now() > tokenInfo.expiresAt) {
+      global.previewTokens.delete(token);
+      return res.status(403).json({ success: false, message: '预览链接已过期' });
+    }
+    
+    const { fileId } = tokenInfo;
+    
+    // 获取文件信息
+    const file = await db.get('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL', [fileId]);
+    
+    if (!file) {
+      return res.status(404).json({ success: false, message: '文件不存在' });
+    }
+    
+    // 检查文件是否存在
+    try {
+      await fs.access(file.file_path);
+    } catch (error) {
+      console.error('文件不存在:', file.file_path);
+      return res.status(404).json({ success: false, message: '文件不存在或已被删除' });
+    }
+    
+    // 读取文件
+    let fileBuffer;
+    try {
+      fileBuffer = await fs.readFile(file.file_path);
+    } catch (error) {
+      console.error('读取文件失败:', error);
+      return res.status(500).json({ success: false, message: '读取文件失败: ' + error.message });
+    }
+    
+    // 解密文件
+    let decryptedBuffer;
+    try {
+      decryptedBuffer = decryptFile(fileBuffer);
+      if (decryptedBuffer instanceof Promise) {
+        decryptedBuffer = await decryptedBuffer;
+      }
+      
+      if (!Buffer.isBuffer(decryptedBuffer)) {
+        decryptedBuffer = Buffer.from(decryptedBuffer);
+      }
+    } catch (error) {
+      console.error('文件解密失败:', error);
+      return res.status(500).json({ success: false, message: '文件解密失败: ' + error.message });
+    }
+    
+    // 确定文件类型
+    let mimeType = file.mime_type || 'application/octet-stream';
+    
+    // 如果mimeType为空或无效，尝试根据文件扩展名推断
+    if (!file.mime_type || file.mime_type === 'application/octet-stream') {
+      const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
+      const mimeTypes = {
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      };
+      if (mimeTypes[fileExt]) {
+        mimeType = mimeTypes[fileExt];
+      }
+    }
+    
+    // 设置响应头
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.original_name)}"`);
+    res.setHeader('Content-Length', decryptedBuffer.length);
+    res.setHeader('Access-Control-Allow-Origin', '*'); // 允许跨域访问（用于在线预览服务）
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    
+    res.send(decryptedBuffer);
+  } catch (error) {
+    console.error('公开预览失败:', error);
+    res.status(500).json({ success: false, message: '预览失败: ' + error.message });
   }
 });
 

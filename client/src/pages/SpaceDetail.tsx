@@ -438,7 +438,19 @@ export default function SpaceDetail() {
                       {
                         title: '文件名',
                         dataIndex: 'original_name',
-                        key: 'original_name'
+                        key: 'original_name',
+                        render: (text: string, record: any) => (
+                          <a 
+                            href={`/files/${record.id}`}
+                            onClick={(e) => {
+                              e.preventDefault()
+                              navigate(`/files/${record.id}`)
+                            }}
+                            style={{ color: '#1890ff' }}
+                          >
+                            {text}
+                          </a>
+                        )
                       },
                       {
                         title: '大小',

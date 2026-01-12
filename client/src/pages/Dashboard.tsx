@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card, Row, Col, Statistic, List, Typography, Button, Space, Tag, message } from 'antd'
 import {
   FileOutlined,
@@ -15,6 +17,7 @@ import api from '../services/api'
 const { Title } = Typography
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin'
   
@@ -69,10 +72,38 @@ export default function Dashboard() {
   // 根据用户角色选择统计数据
   const displayStats = isAdmin ? stats : userStats
 
-  const { data: recentFiles } = useQuery({
+  const { data: recentFilesList } = useQuery({
     queryKey: ['files', 'recent'],
     queryFn: () => api.get('/files/list', { params: { page: 1, pageSize: 10 } })
   })
+
+  // 获取最近一周的新文件（包括新上传和更新的，用于标记）
+  const { data: recentFiles } = useQuery({
+    queryKey: ['files', 'recent-files'],
+    queryFn: () => api.get('/files/recent-files')
+  })
+
+  // 判断文件是否为最近一周的新文件
+  const isRecentlyNew = (fileId: number) => {
+    if (!recentFiles?.data?.files) {
+      console.log('新文件标识检查 - 没有文件数据');
+      return false;
+    }
+    const isNew = recentFiles.data.files.some((f: any) => f.id === fileId);
+    if (isNew) {
+      console.log('新文件标识检查 - 文件', fileId, '是新文件');
+    }
+    return isNew;
+  }
+  
+  // 调试信息
+  useEffect(() => {
+    console.log('工作台 - recentFilesList:', recentFilesList);
+    console.log('工作台 - recentFiles:', recentFiles);
+    if (recentFiles?.data?.files) {
+      console.log('工作台 - 新文件列表:', recentFiles.data.files);
+    }
+  }, [recentFilesList, recentFiles])
 
   // 处理下载
   const handleDownload = async (platform: 'mac' | 'win' | 'linux') => {
@@ -201,15 +232,34 @@ export default function Dashboard() {
 
       <Card title="最近文件">
         <List
-          dataSource={recentFiles?.data?.files || []}
-          renderItem={(item: any) => (
-            <List.Item>
-              <List.Item.Meta
-                title={item.original_name}
-                description={`${item.creator_name} • ${new Date(item.created_at).toLocaleString()}`}
-              />
-            </List.Item>
-          )}
+          dataSource={recentFilesList?.data?.files || []}
+          renderItem={(item: any) => {
+            const isNew = isRecentlyNew(item.id)
+            return (
+              <List.Item>
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      {isNew && (
+                        <span style={{ color: '#ff4d4f', fontWeight: 'bold' }}>[新]</span>
+                      )}
+                      <a 
+                        href={`/files/${item.id}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          navigate(`/files/${item.id}`)
+                        }}
+                        style={{ color: '#1890ff' }}
+                      >
+                        {item.original_name}
+                      </a>
+                    </Space>
+                  }
+                  description={`${item.creator_name} • ${new Date(item.created_at).toLocaleString()}`}
+                />
+              </List.Item>
+            )
+          }}
         />
       </Card>
     </div>
