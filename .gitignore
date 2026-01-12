@@ -45,6 +45,13 @@ backups/
 tmp/
 temp/
 
+# 安装程序（文件太大，不应提交到 Git）
+downloads/*.exe
+downloads/*.dmg
+downloads/*.AppImage
+downloads/*.deb
+downloads/*.rpm
+
 
 
 
