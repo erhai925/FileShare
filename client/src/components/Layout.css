@@ -51,6 +51,15 @@
   min-height: 280px;
 }
 
+/* 文件通知弹框样式 */
+.file-notification-modal .ant-modal-wrap {
+  pointer-events: none !important;
+}
+
+.file-notification-modal .ant-modal {
+  pointer-events: auto !important;
+}
+
 
 
 

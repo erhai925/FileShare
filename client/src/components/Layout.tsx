@@ -9,7 +9,7 @@ import {
   LogoutOutlined,
   DeleteOutlined
 } from '@ant-design/icons'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
@@ -23,15 +23,17 @@ export default function Layout() {
   const location = useLocation()
   const { user, logout } = useAuthStore()
   const [notificationVisible, setNotificationVisible] = useState(false)
+  const shownFileIdsRef = useRef<Set<number>>(new Set())
 
   // 获取最近一周的新文件（包括新上传和更新的）
   const { data: recentFiles } = useQuery({
     queryKey: ['files', 'recent-files'],
     queryFn: () => api.get('/files/recent-files'),
-    enabled: !!user
+    enabled: !!user,
+    refetchInterval: 30000 // 每30秒刷新一次，检查新文件
   })
 
-  // 检查是否需要显示通知（登录后只显示一次）
+  // 检查是否需要显示通知（每次有新文件都弹出）
   useEffect(() => {
     console.log('通知检查 - user:', user);
     console.log('通知检查 - recentFiles:', recentFiles);
@@ -69,20 +71,22 @@ export default function Layout() {
       return;
     }
 
-    // 检查是否已经显示过通知（使用 localStorage）
-    const notificationKey = `file_update_notification_${user.id}_${new Date().toDateString()}`
-    const hasShownToday = localStorage.getItem(notificationKey)
+    // 检查是否有未显示过的新文件
+    const newFiles = teamFiles.filter((f: any) => !shownFileIdsRef.current.has(f.id))
     
-    console.log('通知检查 - localStorage key:', notificationKey);
-    console.log('通知检查 - 今天已显示:', hasShownToday);
+    console.log('通知检查 - 已显示的文件ID:', Array.from(shownFileIdsRef.current));
+    console.log('通知检查 - 新文件数量:', newFiles.length);
 
-    if (!hasShownToday) {
-      console.log('通知检查 - 显示通知弹框');
+    if (newFiles.length > 0) {
+      console.log('通知检查 - 发现新文件，显示通知弹框');
+      // 更新已显示的文件ID集合
+      newFiles.forEach((f: any) => {
+        shownFileIdsRef.current.add(f.id)
+      })
+      // 显示通知弹框
       setNotificationVisible(true)
-      // 标记今天已显示
-      localStorage.setItem(notificationKey, 'true')
     } else {
-      console.log('通知检查 - 今天已显示过，不显示');
+      console.log('通知检查 - 没有新文件，不显示');
     }
   }, [user, recentFiles])
 
