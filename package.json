@@ -1,0 +1,88 @@
+{
+  "name": "fileshare",
+  "version": "1.0.0",
+  "description": "小团队文件共享系统 - 支持私有部署、精准权限控制、多端访问",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "server:dev": "nodemon server/index.js",
+    "server:start": "node server/index.js",
+    "client:dev": "cd client && npm run dev",
+    "client:build": "cd client && npm run build",
+    "init": "node server/scripts/init.js",
+    "backup": "node server/scripts/backup.js",
+    "fix-db": "node server/scripts/fix-space-id-constraint.js",
+    "check-server": "node check-server.js",
+    "electron:dev": "NODE_ENV=development electron electron/main.js",
+    "electron:build": "npm run client:build && electron-builder",
+    "electron:build:win": "npm run client:build && electron-builder --win --config.npmRebuild=false",
+    "electron:pack": "npm run client:build && electron-builder --dir"
+  },
+  "keywords": [
+    "fileshare",
+    "file-sharing",
+    "team-collaboration"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "archiver": "^6.0.1",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mime-types": "^2.1.35",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "sm-crypto": "^0.3.7",
+    "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3",
+    "nodemon": "^3.0.2"
+  },
+  "build": {
+    "appId": "com.fileshare.app",
+    "productName": "FileShare",
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "client/dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.{node,dll}"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": "dmg"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-card {
+  width: 400px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.login-footer {
+  margin-top: 16px;
+  text-align: center;
+  color: #999;
+  font-size: 12px;
+}
+
+.login-footer p {
+  margin: 4px 0;
+}
+
+
+
+
+
