@@ -1604,6 +1604,11 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     
     const isImage = mimeType.startsWith('image/');
     const isPdf = mimeType === 'application/pdf';
+    
+    // 获取文件扩展名用于辅助判断
+    const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
+    
+    // 判断是否为 Office 文档（通过 MIME 类型或文件扩展名）
     const isOffice = mimeType.includes('word') || 
                      mimeType.includes('excel') || 
                      mimeType.includes('powerpoint') ||
@@ -1611,7 +1616,8 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
                      mimeType.includes('presentation') ||
                      mimeType.includes('msword') ||
                      mimeType.includes('ms-excel') ||
-                     mimeType.includes('ms-powerpoint');
+                     mimeType.includes('ms-powerpoint') ||
+                     ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'].includes(fileExt);
     
     // 如果是下载请求，直接返回文件
     if (download === 'true') {
