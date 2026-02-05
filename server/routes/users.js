@@ -237,5 +237,93 @@ router.post('/:userId/revoke-all-permissions', authenticate, requireAdmin, async
   }
 });
 
+// 重置用户密码（管理员）
+router.post('/:userId/reset-password', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { newPassword } = req.body;
+    const userIdNum = parseInt(userId);
+    
+    // 验证新密码
+    if (!newPassword) {
+      return res.status(400).json({ success: false, message: '新密码不能为空' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: '密码长度至少6位' });
+    }
+    
+    // 检查用户是否存在
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [userIdNum]);
+    if (!user) {
+      return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    // 密码加密
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    
+    // 更新密码
+    await db.run(
+      'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [passwordHash, userIdNum]
+    );
+    
+    await logOperation(req.user.id, 'reset_user_password', 'user', userIdNum, {
+      username: user.username,
+      email: user.email
+    }, req);
+    
+    res.json({ success: true, message: '用户密码已重置' });
+  } catch (error) {
+    console.error('重置用户密码失败:', error);
+    res.status(500).json({ success: false, message: '重置用户密码失败: ' + error.message });
+  }
+});
+
+// 删除用户（管理员）
+router.delete('/:userId', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userIdNum = parseInt(userId);
+    
+    // 检查用户是否存在
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [userIdNum]);
+    if (!user) {
+      return res.status(404).json({ success: false, message: '用户不存在' });
+    }
+    
+    // 不能删除自己
+    if (user.id === req.user.id) {
+      return res.status(400).json({ success: false, message: '不能删除自己' });
+    }
+    
+    // 开始事务：删除用户相关的所有数据
+    // 1. 删除用户权限
+    await db.run('DELETE FROM permissions WHERE user_id = ?', [userIdNum]);
+    
+    // 2. 从用户组中移除
+    await db.run('DELETE FROM user_group_members WHERE user_id = ?', [userIdNum]);
+    
+    // 3. 删除用户创建的分享链接（可选，也可以保留）
+    // await db.run('DELETE FROM shares WHERE created_by = ?', [userIdNum]);
+    
+    // 4. 删除用户评论（可选，也可以保留）
+    // await db.run('DELETE FROM comments WHERE user_id = ?', [userIdNum]);
+    
+    // 5. 最后删除用户本身
+    await db.run('DELETE FROM users WHERE id = ?', [userIdNum]);
+    
+    await logOperation(req.user.id, 'delete_user', 'user', userIdNum, {
+      username: user.username,
+      email: user.email
+    }, req);
+    
+    res.json({ success: true, message: '用户已删除' });
+  } catch (error) {
+    console.error('删除用户失败:', error);
+    res.status(500).json({ success: false, message: '删除用户失败: ' + error.message });
+  }
+});
+
 module.exports = router;
 

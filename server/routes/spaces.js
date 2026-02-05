@@ -647,6 +647,121 @@ router.delete('/:spaceId/folders/:folderId', authenticate, async (req, res) => {
   }
 });
 
+// 获取空间的完整文件树（包含文件夹和文件）
+router.get('/:spaceId/file-tree', authenticate, async (req, res) => {
+  try {
+    const { spaceId } = req.params;
+    
+    // 检查空间是否存在
+    const space = await db.get('SELECT * FROM spaces WHERE id = ?', [spaceId]);
+    if (!space) {
+      return res.status(404).json({ success: false, message: '空间不存在' });
+    }
+    
+    // 检查权限
+    if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
+      const hasPermission = await checkPermission(req.user.id, 'space', spaceId, 'read');
+      if (!hasPermission) {
+        return res.status(403).json({ success: false, message: '无访问权限' });
+      }
+    }
+    
+    // 获取所有文件夹
+    const folders = await db.query(
+      `SELECT f.*, u.username as creator_name
+       FROM folders f
+       LEFT JOIN users u ON f.created_by = u.id
+       WHERE f.space_id = ?
+       ORDER BY f.path ASC`,
+      [spaceId]
+    );
+    
+    // 获取所有文件（包括未分类到文件夹的文件）
+    let filesSql = `SELECT f.*, 
+      u1.username as creator_name, 
+      u2.username as updater_name
+      FROM files f
+      LEFT JOIN users u1 ON f.created_by = u1.id
+      LEFT JOIN users u2 ON f.updated_by = u2.id
+      WHERE f.deleted_at IS NULL AND f.space_id = ?`;
+    const filesParams = [spaceId];
+    
+    // 非管理员只能看到有权限的文件
+    if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
+      filesSql += ` AND (
+        f.created_by = ? OR 
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'file'
+          AND p.resource_id = f.id
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        ) OR
+        EXISTS (
+          SELECT 1 FROM permissions p
+          WHERE p.resource_type = 'space'
+          AND p.resource_id = ?
+          AND (p.user_id = ? OR p.group_id IN (
+            SELECT group_id FROM user_group_members WHERE user_id = ?
+          ))
+        )
+      )`;
+      filesParams.push(req.user.id, req.user.id, req.user.id, spaceId, req.user.id, req.user.id);
+    }
+    
+    filesSql += ` ORDER BY f.original_name ASC`;
+    const files = await db.query(filesSql, filesParams);
+    
+    // 构建文件夹映射
+    const folderMap = new Map();
+    folders.forEach(folder => {
+      folder.children = [];
+      folder.files = [];
+      folderMap.set(folder.id, folder);
+    });
+    
+    // 构建文件夹树形结构
+    const rootFolders = [];
+    folders.forEach(folder => {
+      if (folder.parent_id) {
+        const parent = folderMap.get(folder.parent_id);
+        if (parent) {
+          parent.children.push(folder);
+        } else {
+          rootFolders.push(folder);
+        }
+      } else {
+        rootFolders.push(folder);
+      }
+    });
+    
+    // 将文件分配到对应的文件夹
+    files.forEach(file => {
+      if (file.folder_id) {
+        const folder = folderMap.get(file.folder_id);
+        if (folder) {
+          folder.files.push(file);
+        }
+      }
+    });
+    
+    // 获取未分类到文件夹的文件（folder_id 为 null）
+    const rootFiles = files.filter(file => !file.folder_id);
+    
+    res.json({
+      success: true,
+      data: {
+        folders: rootFolders,
+        rootFiles: rootFiles
+      }
+    });
+  } catch (error) {
+    console.error('获取文件树失败:', error);
+    res.status(500).json({ success: false, message: '获取文件树失败' });
+  }
+});
+
 // 获取文件夹中的文件
 router.get('/:spaceId/folders/:folderId/files', authenticate, async (req, res) => {
   try {

@@ -756,7 +756,7 @@ router.delete('/:fileId/permanent', authenticate, async (req, res) => {
 router.patch('/:fileId/move', authenticate, async (req, res) => {
   try {
     const { fileId } = req.params;
-    const { spaceId, folderId } = req.body;
+    let { spaceId, folderId } = req.body;
     
     const file = await db.get('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL', [fileId]);
     if (!file) {
@@ -769,38 +769,65 @@ router.patch('/:fileId/move', authenticate, async (req, res) => {
       return res.status(403).json({ success: false, message: '无移动权限' });
     }
     
+    // 处理 folderId：如果是 null 或空字符串，设为 null
+    if (folderId === null || folderId === '' || folderId === 'null' || folderId === 'undefined') {
+      folderId = null;
+    } else if (folderId) {
+      folderId = parseInt(folderId);
+      if (isNaN(folderId)) {
+        folderId = null;
+      }
+    }
+    
+    // 如果指定了文件夹，验证文件夹是否存在
+    if (folderId) {
+      const folder = await db.get('SELECT * FROM folders WHERE id = ?', [folderId]);
+      if (!folder) {
+        return res.status(400).json({ success: false, message: '文件夹不存在' });
+      }
+      
+      // 如果文件已有空间，确保文件夹属于同一空间
+      if (file.space_id && folder.space_id !== file.space_id) {
+        return res.status(400).json({ success: false, message: '文件夹不属于文件所在的空间' });
+      }
+      
+      // 如果指定了空间，确保文件夹属于该空间
+      if (spaceId && folder.space_id !== parseInt(spaceId)) {
+        return res.status(400).json({ success: false, message: '文件夹不属于指定的空间' });
+      }
+      
+      // 如果只指定了文件夹，使用文件夹所属的空间
+      if (!spaceId && folder.space_id) {
+        spaceId = folder.space_id;
+      }
+    }
+    
     // 如果指定了空间，检查空间权限
     if (spaceId) {
       const hasSpacePermission = await checkPermission(req.user.id, 'space', spaceId, 'write');
       if (!hasSpacePermission) {
         return res.status(403).json({ success: false, message: '无目标空间权限' });
       }
-      
-      // 如果指定了文件夹，检查文件夹是否属于该空间
-      if (folderId) {
-        const folder = await db.get('SELECT * FROM folders WHERE id = ? AND space_id = ?', [folderId, spaceId]);
-        if (!folder) {
-          return res.status(400).json({ success: false, message: '文件夹不存在或不属于该空间' });
-        }
-      }
     }
     
     // 更新文件的空间和文件夹关联
     await db.run(
       'UPDATE files SET space_id = ?, folder_id = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?',
-      [spaceId || null, folderId || null, req.user.id, fileId]
+      [spaceId || file.space_id || null, folderId, req.user.id, fileId]
     );
     
     await logOperation(req.user.id, 'move_file', 'file', fileId, {
       fileName: file.original_name,
-      targetSpaceId: spaceId,
+      previousSpaceId: file.space_id,
+      previousFolderId: file.folder_id,
+      targetSpaceId: spaceId || file.space_id,
       targetFolderId: folderId
     }, req);
     
     res.json({ success: true, message: '文件移动成功' });
   } catch (error) {
     console.error('移动文件失败:', error);
-    res.status(500).json({ success: false, message: '移动文件失败' });
+    res.status(500).json({ success: false, message: '移动文件失败: ' + error.message });
   }
 });
 

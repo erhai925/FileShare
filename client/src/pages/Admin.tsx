@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Tabs, Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Alert } from 'antd'
-import { UserOutlined, FileTextOutlined, SettingOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons'
+import { Tabs, Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Alert, Popconfirm } from 'antd'
+import { UserOutlined, FileTextOutlined, SettingOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined, DeleteOutlined, KeyOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../services/api'
 
@@ -8,7 +8,13 @@ const { Option } = Select
 
 export default function Admin() {
   const [createModalVisible, setCreateModalVisible] = useState(false)
+  const [editModalVisible, setEditModalVisible] = useState(false)
+  const [resetPasswordModalVisible, setResetPasswordModalVisible] = useState(false)
+  const [editingUser, setEditingUser] = useState<any>(null)
+  const [resettingUser, setResettingUser] = useState<any>(null)
   const [form] = Form.useForm()
+  const [editForm] = Form.useForm()
+  const [resetPasswordForm] = Form.useForm()
   const queryClient = useQueryClient()
 
   const { data: users } = useQuery({
@@ -37,6 +43,101 @@ export default function Admin() {
 
   const handleCreateUser = async (values: any) => {
     await createUserMutation.mutateAsync(values)
+  }
+
+  // 更新用户
+  const updateUserMutation = useMutation({
+    mutationFn: ({ userId, data }: { userId: number, data: any }) => api.patch(`/users/${userId}`, data),
+    onSuccess: () => {
+      message.success('用户信息更新成功')
+      setEditModalVisible(false)
+      setEditingUser(null)
+      editForm.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: any) => {
+      message.error(error.message || '更新用户失败')
+    }
+  })
+
+  // 切换用户状态（启用/禁用）
+  const toggleUserStatusMutation = useMutation({
+    mutationFn: (userId: number) => api.post(`/users/${userId}/toggle-status`),
+    onSuccess: () => {
+      message.success('用户状态已更新')
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: any) => {
+      message.error(error.message || '更新用户状态失败')
+    }
+  })
+
+  // 删除用户
+  const deleteUserMutation = useMutation({
+    mutationFn: (userId: number) => api.delete(`/users/${userId}`),
+    onSuccess: () => {
+      message.success('用户已删除')
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: any) => {
+      message.error(error.message || '删除用户失败')
+    }
+  })
+
+  // 重置用户密码
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ userId, newPassword }: { userId: number, newPassword: string }) => 
+      api.post(`/users/${userId}/reset-password`, { newPassword }),
+    onSuccess: () => {
+      message.success('用户密码已重置')
+      setResetPasswordModalVisible(false)
+      setResettingUser(null)
+      resetPasswordForm.resetFields()
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error: any) => {
+      message.error(error.message || '重置密码失败')
+    }
+  })
+
+  const handleEditUser = (user: any) => {
+    setEditingUser(user)
+    editForm.setFieldsValue({
+      role: user.role,
+      status: user.status,
+      realName: user.real_name || ''
+    })
+    setEditModalVisible(true)
+  }
+
+  const handleUpdateUser = async (values: any) => {
+    if (!editingUser) return
+    await updateUserMutation.mutateAsync({
+      userId: editingUser.id,
+      data: values
+    })
+  }
+
+  const handleToggleStatus = async (user: any) => {
+    await toggleUserStatusMutation.mutateAsync(user.id)
+  }
+
+  const handleDeleteUser = async (user: any) => {
+    await deleteUserMutation.mutateAsync(user.id)
+  }
+
+  const handleResetPassword = (user: any) => {
+    setResettingUser(user)
+    resetPasswordForm.resetFields()
+    setResetPasswordModalVisible(true)
+  }
+
+  const handleResetPasswordSubmit = async (values: any) => {
+    if (!resettingUser) return
+    await resetPasswordMutation.mutateAsync({
+      userId: resettingUser.id,
+      newPassword: values.newPassword
+    })
   }
 
   const userColumns = [
@@ -70,6 +171,62 @@ export default function Admin() {
       dataIndex: 'created_at', 
       key: 'created_at',
       render: (time: string) => time ? new Date(time).toLocaleString() : '-'
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 300,
+      render: (_: any, record: any) => (
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleEditUser(record)}
+          >
+            编辑
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<KeyOutlined />}
+            onClick={() => handleResetPassword(record)}
+          >
+            重置密码
+          </Button>
+          <Popconfirm
+            title={`确定要${record.status === 'active' ? '禁用' : '启用'}该用户吗？`}
+            onConfirm={() => handleToggleStatus(record)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Button
+              type="link"
+              size="small"
+              danger={record.status === 'active'}
+            >
+              {record.status === 'active' ? '禁用' : '启用'}
+            </Button>
+          </Popconfirm>
+          <Popconfirm
+            title="确定要删除该用户吗？此操作不可恢复！"
+            description="删除用户将同时删除该用户的所有权限和用户组关联"
+            onConfirm={() => handleDeleteUser(record)}
+            okText="确定删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+          >
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+            >
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      )
     }
   ]
 
@@ -243,6 +400,122 @@ export default function Admin() {
               <Option value="active">启用</Option>
               <Option value="disabled">禁用</Option>
             </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 编辑用户弹窗 */}
+      <Modal
+        title="编辑用户"
+        open={editModalVisible}
+        onCancel={() => {
+          setEditModalVisible(false)
+          setEditingUser(null)
+          editForm.resetFields()
+        }}
+        onOk={() => editForm.submit()}
+        confirmLoading={updateUserMutation.isPending}
+        width={600}
+      >
+        <Form
+          form={editForm}
+          layout="vertical"
+          onFinish={handleUpdateUser}
+        >
+          <Form.Item label="用户名">
+            <Input value={editingUser?.username} disabled />
+          </Form.Item>
+
+          <Form.Item label="邮箱">
+            <Input value={editingUser?.email} disabled />
+          </Form.Item>
+
+          <Form.Item
+            name="realName"
+            label="真实姓名"
+          >
+            <Input placeholder="请输入真实姓名（可选）" />
+          </Form.Item>
+
+          <Form.Item
+            name="role"
+            label="角色"
+            rules={[{ required: true, message: '请选择角色' }]}
+          >
+            <Select placeholder="请选择角色">
+              <Option value="viewer">查看者</Option>
+              <Option value="editor">编辑者</Option>
+              <Option value="commenter">仅评论者</Option>
+              <Option value="admin">管理员</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="status"
+            label="状态"
+            rules={[{ required: true, message: '请选择状态' }]}
+          >
+            <Select placeholder="请选择状态">
+              <Option value="active">启用</Option>
+              <Option value="disabled">禁用</Option>
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 重置密码弹窗 */}
+      <Modal
+        title="重置用户密码"
+        open={resetPasswordModalVisible}
+        onCancel={() => {
+          setResetPasswordModalVisible(false)
+          setResettingUser(null)
+          resetPasswordForm.resetFields()
+        }}
+        onOk={() => resetPasswordForm.submit()}
+        confirmLoading={resetPasswordMutation.isPending}
+        width={500}
+      >
+        <Alert
+          message="重置密码提示"
+          description={`您正在为用户 "${resettingUser?.username}" 重置登录密码。重置后，用户需要使用新密码登录。`}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form
+          form={resetPasswordForm}
+          layout="vertical"
+          onFinish={handleResetPasswordSubmit}
+        >
+          <Form.Item
+            name="newPassword"
+            label="新密码"
+            rules={[
+              { required: true, message: '请输入新密码' },
+              { min: 6, message: '密码长度至少6位' }
+            ]}
+          >
+            <Input.Password placeholder="请输入新密码（至少6位）" />
+          </Form.Item>
+
+          <Form.Item
+            name="confirmPassword"
+            label="确认密码"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: '请确认新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve()
+                  }
+                  return Promise.reject(new Error('两次输入的密码不一致'))
+                }
+              })
+            ]}
+          >
+            <Input.Password placeholder="请再次输入新密码" />
           </Form.Item>
         </Form>
       </Modal>

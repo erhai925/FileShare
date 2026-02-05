@@ -63,6 +63,14 @@ export default function Files() {
     queryFn: () => api.get('/spaces')
   })
 
+  // 获取选中空间的文件夹列表（用于移动文件）
+  const selectedSpaceId = Form.useWatch('spaceId', moveForm)
+  const { data: foldersData } = useQuery({
+    queryKey: ['space-folders', selectedSpaceId],
+    queryFn: () => api.get(`/spaces/${selectedSpaceId}/folders`),
+    enabled: !!selectedSpaceId
+  })
+
   const { data, isLoading } = useQuery({
     queryKey: ['files', currentPage, debouncedKeyword],
     queryFn: () => api.get('/files/list', {
@@ -164,6 +172,10 @@ export default function Files() {
       spaceId: file.space_id || undefined,
       folderId: file.folder_id || undefined
     })
+    // 如果文件已有空间，清空文件夹选择，等待重新加载
+    if (file.space_id) {
+      // 文件夹会在空间选择后自动加载
+    }
   }
 
   const handleMoveConfirm = async (values: any) => {
@@ -421,6 +433,10 @@ export default function Files() {
             <Select
               placeholder="选择空间（留空表示移除空间关联）"
               allowClear
+              onChange={(value) => {
+                // 当空间改变时，清空文件夹选择
+                moveForm.setFieldValue('folderId', null)
+              }}
             >
               {spacesData?.data?.map((space: any) => (
                 <Option key={space.id} value={space.id}>
@@ -432,13 +448,16 @@ export default function Files() {
           <Form.Item
             name="folderId"
             label="选择文件夹（可选）"
+            extra="选择目标文件夹，留空表示移动到空间根目录"
           >
             <Select
-              placeholder="选择文件夹（可选）"
+              placeholder="选择文件夹（留空表示根目录）"
               allowClear
-              disabled={!moveForm.getFieldValue('spaceId')}
+              disabled={!selectedSpaceId}
+              loading={!foldersData && !!selectedSpaceId}
             >
-              {/* 文件夹选项需要根据选择的空间动态加载 */}
+              <Option value={null}>根目录（不分类到文件夹）</Option>
+              {foldersData?.data && renderFolderOptions(foldersData.data)}
             </Select>
           </Form.Item>
         </Form>
@@ -485,5 +504,23 @@ export default function Files() {
       />
     </div>
   )
+}
+
+// 递归渲染文件夹选项
+function renderFolderOptions(folders: any[], level = 0): React.ReactNode[] {
+  const { Option } = Select
+  const options: React.ReactNode[] = []
+  folders.forEach(folder => {
+    const prefix = '  '.repeat(level)
+    options.push(
+      <Option key={folder.id} value={folder.id}>
+        {prefix}{folder.name}
+      </Option>
+    )
+    if (folder.children && folder.children.length > 0) {
+      options.push(...renderFolderOptions(folder.children, level + 1))
+    }
+  })
+  return options
 }
 

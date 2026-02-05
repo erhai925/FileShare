@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Button, Space, Modal, Form, Input, Select, message, Table, Tag, Popconfirm, Upload, Tabs, Tree, Empty, Breadcrumb, Typography } from 'antd'
-import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined } from '@ant-design/icons'
+import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FileOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
@@ -18,12 +18,15 @@ export default function SpaceDetail() {
   const [renameFolderModalVisible, setRenameFolderModalVisible] = useState(false)
   const [membersModalVisible, setMembersModalVisible] = useState(false)
   const [settingsModalVisible, setSettingsModalVisible] = useState(false)
+  const [moveFileModalVisible, setMoveFileModalVisible] = useState(false)
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null)
   const [selectedFolder, setSelectedFolder] = useState<any>(null)
+  const [selectedFile, setSelectedFile] = useState<any>(null)
   const [folderForm] = Form.useForm()
   const [renameFolderForm] = Form.useForm()
   const [memberForm] = Form.useForm()
   const [settingsForm] = Form.useForm()
+  const [moveFileForm] = Form.useForm()
   const queryClient = useQueryClient()
   const { token } = useAuthStore()
 
@@ -40,6 +43,13 @@ export default function SpaceDetail() {
   const { data: foldersData, refetch: refetchFolders } = useQuery({
     queryKey: ['space-folders', spaceIdNum],
     queryFn: () => api.get(`/spaces/${spaceIdNum}/folders`),
+    enabled: !!spaceIdNum
+  })
+
+  // 获取空间完整文件树（包含文件夹和文件）
+  const { data: fileTreeData, refetch: refetchFileTree } = useQuery({
+    queryKey: ['space-file-tree', spaceIdNum],
+    queryFn: () => api.get(`/spaces/${spaceIdNum}/file-tree`),
     enabled: !!spaceIdNum
   })
 
@@ -73,6 +83,7 @@ export default function SpaceDetail() {
       setFolderModalVisible(false)
       folderForm.resetFields()
       refetchFolders()
+      refetchFileTree()
     },
     onError: (error: any) => {
       message.error(error.message || '创建文件夹失败')
@@ -89,6 +100,7 @@ export default function SpaceDetail() {
       setSelectedFolder(null)
       renameFolderForm.resetFields()
       refetchFolders()
+      refetchFileTree()
     },
     onError: (error: any) => {
       message.error(error.message || '重命名文件夹失败')
@@ -103,6 +115,7 @@ export default function SpaceDetail() {
       message.success('文件夹删除成功')
       setSelectedFolderId(null)
       refetchFolders()
+      refetchFileTree()
       if (selectedFolderId) {
         refetchFolderFiles()
       }
@@ -156,6 +169,24 @@ export default function SpaceDetail() {
     }
   })
 
+  // 移动文件
+  const moveFileMutation = useMutation({
+    mutationFn: ({ fileId, data }: { fileId: number, data: any }) =>
+      api.patch(`/files/${fileId}/move`, data),
+    onSuccess: () => {
+      message.success('文件移动成功')
+      setMoveFileModalVisible(false)
+      setSelectedFile(null)
+      moveFileForm.resetFields()
+      refetchFileTree()
+      refetchSpaceDetail()
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+    },
+    onError: (error: any) => {
+      message.error(error.message || '移动文件失败')
+    }
+  })
+
   // 空间内文件上传配置
   const spaceUploadProps: UploadProps = {
     name: 'file',
@@ -173,6 +204,7 @@ export default function SpaceDetail() {
         if (response?.success) {
           message.success(response.message || `${info.file.name} 上传成功`)
           refetchSpaceDetail()
+          refetchFileTree()
           if (selectedFolderId) {
             refetchFolderFiles()
           }
@@ -270,7 +302,172 @@ export default function SpaceDetail() {
     }
   }
 
-  // 将文件夹数据转换为树形结构
+  const handleMoveFile = (file: any) => {
+    setSelectedFile(file)
+    moveFileForm.setFieldsValue({
+      folderId: file.folder_id || null
+    })
+    setMoveFileModalVisible(true)
+  }
+
+  const handleMoveFileConfirm = async (values: any) => {
+    if (!selectedFile || !spaceIdNum) return
+    await moveFileMutation.mutateAsync({
+      fileId: selectedFile.id,
+      data: {
+        spaceId: spaceIdNum, // 确保文件在同一空间内移动
+        folderId: values.folderId || null
+      }
+    })
+  }
+
+  // 格式化文件大小
+  const formatFileSize = (size: number) => {
+    if (size < 1024) return `${size} B`
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`
+    if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(2)} MB`
+    return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`
+  }
+
+  // 将文件夹和文件数据转换为树形结构
+  const buildFileTree = (folders: any[], rootFiles: any[] = []): DataNode[] => {
+    const treeNodes: DataNode[] = []
+    
+    // 添加根目录下的文件
+    rootFiles.forEach(file => {
+      treeNodes.push({
+        title: (
+          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            <a
+              href={`/files/${file.id}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                navigate(`/files/${file.id}`)
+              }}
+              style={{ color: '#1890ff' }}
+            >
+              {file.original_name}
+            </a>
+            <Button
+              type="link"
+              size="small"
+              icon={<FolderOpenOutlined />}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleMoveFile(file)
+              }}
+              title="移动到文件夹"
+            >
+              移动
+            </Button>
+          </Space>
+        ),
+        key: `file-${file.id}`,
+        icon: <FileOutlined />,
+        isLeaf: true
+      })
+    })
+    
+    // 添加文件夹及其子节点
+    folders.forEach(folder => {
+      const folderFiles = folder.files || []
+      const children: DataNode[] = []
+      
+      // 添加文件夹中的文件
+      folderFiles.forEach((file: any) => {
+        children.push({
+          title: (
+            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+              <a
+                href={`/files/${file.id}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  navigate(`/files/${file.id}`)
+                }}
+                style={{ color: '#1890ff' }}
+              >
+                {file.original_name}
+              </a>
+              <Button
+                type="link"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleMoveFile(file)
+                }}
+                title="移动到文件夹"
+              >
+                移动
+              </Button>
+            </Space>
+          ),
+          key: `file-${file.id}`,
+          icon: <FileOutlined />,
+          isLeaf: true
+        })
+      })
+      
+      // 递归添加子文件夹
+      if (folder.children && folder.children.length > 0) {
+        children.push(...buildFileTree(folder.children, []))
+      }
+      
+      treeNodes.push({
+        title: (
+          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            <span>
+              {folder.name}
+              {folderFiles.length > 0 && (
+                <span style={{ color: '#999', marginLeft: 8, fontSize: '12px' }}>
+                  ({folderFiles.length} 个文件)
+                </span>
+              )}
+            </span>
+            <Space onClick={(e) => e.stopPropagation()}>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleOpenRenameFolder(folder)
+                }}
+              >
+                重命名
+              </Button>
+              <Popconfirm
+                title="确定要删除该文件夹吗？"
+                onConfirm={(e) => {
+                  e?.stopPropagation()
+                  handleDeleteFolder(folder.id)
+                }}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  删除
+                </Button>
+              </Popconfirm>
+            </Space>
+          </Space>
+        ),
+        key: `folder-${folder.id}`,
+        icon: <FolderOutlined />,
+        children: children.length > 0 ? children : undefined
+      })
+    })
+    
+    return treeNodes
+  }
+
+  // 将文件夹数据转换为树形结构（仅文件夹，用于旧版文件夹标签页）
   const buildFolderTree = (folders: any[]): DataNode[] => {
     return folders.map(folder => ({
       title: (
@@ -419,7 +616,56 @@ export default function SpaceDetail() {
         </Space>
 
         <Tabs
+          defaultActiveKey="tree"
           items={[
+            {
+              key: 'tree',
+              label: '文件树',
+              children: (
+                <div>
+                  <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+                    <span>文件夹结构</span>
+                    <Space>
+                      <Button
+                        type="default"
+                        icon={<PlusOutlined />}
+                        onClick={() => setFolderModalVisible(true)}
+                      >
+                        新建文件夹
+                      </Button>
+                      <Upload {...spaceUploadProps}>
+                        <Button type="primary" icon={<UploadOutlined />}>
+                          上传文件
+                        </Button>
+                      </Upload>
+                    </Space>
+                  </Space>
+                  
+                  {fileTreeData?.data ? (
+                    <Tree
+                      showIcon
+                      defaultExpandAll
+                      treeData={buildFileTree(fileTreeData.data.folders || [], fileTreeData.data.rootFiles || [])}
+                      onSelect={(selectedKeys) => {
+                        // 处理文件夹选择
+                        const folderKey = selectedKeys.find((key) => 
+                          typeof key === 'string' && key.startsWith('folder-')
+                        )
+                        if (folderKey) {
+                          const folderId = parseInt(folderKey.replace('folder-', ''))
+                          handleSelectFolder(folderId)
+                        } else {
+                          handleSelectFolder(null)
+                        }
+                      }}
+                      selectedKeys={selectedFolderId ? [`folder-${selectedFolderId}`] : []}
+                    />
+                  ) : (
+                    <Empty description="暂无文件和文件夹" />
+                  )}
+                </div>
+              )
+            },
             {
               key: 'files',
               label: '文件列表',
@@ -797,6 +1043,43 @@ export default function SpaceDetail() {
               )}
             </div>
           )}
+        </Form>
+      </Modal>
+
+      {/* 移动文件弹窗 */}
+      <Modal
+        title="移动文件到文件夹"
+        open={moveFileModalVisible}
+        onCancel={() => {
+          setMoveFileModalVisible(false)
+          setSelectedFile(null)
+          moveFileForm.resetFields()
+        }}
+        onOk={() => moveFileForm.submit()}
+        confirmLoading={moveFileMutation.isPending}
+        width={500}
+      >
+        <Form
+          form={moveFileForm}
+          layout="vertical"
+          onFinish={handleMoveFileConfirm}
+        >
+          <Form.Item label="文件名称">
+            <Input value={selectedFile?.original_name} disabled />
+          </Form.Item>
+          <Form.Item
+            name="folderId"
+            label="选择文件夹"
+            extra="选择目标文件夹，留空表示移动到空间根目录"
+          >
+            <Select
+              placeholder="选择文件夹（留空表示根目录）"
+              allowClear
+            >
+              <Option value={null}>根目录（不分类到文件夹）</Option>
+              {foldersData?.data && renderFolderOptions(foldersData.data)}
+            </Select>
+          </Form.Item>
         </Form>
       </Modal>
     </div>
