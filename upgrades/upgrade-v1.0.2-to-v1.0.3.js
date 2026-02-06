@@ -125,6 +125,7 @@ async function getDeploymentPaths() {
   const defaultBackupPath = path.join(projectRoot, 'backups');
 
   logInfo(`当前脚本所在项目根目录: ${projectRoot}`);
+  logInfo('若部署路径与上述相同，直接回车即可');
   log('');
 
   const projectRootInput = await question('项目部署根目录（代码所在路径）', projectRoot);
@@ -190,7 +191,14 @@ async function buildFrontend(projectRoot) {
 async function verifyFiles(projectRoot) {
   logStep(5, '验证升级文件');
 
-  const filesToCheck = [
+  const requiredFiles = [
+    'package.json',
+    'server/index.js',
+    'client/package.json',
+    'upgrades/version.json'
+  ];
+
+  const optionalFiles = [
     'server/routes/admin.js',
     'server/routes/search.js',
     'server/middleware/auth.js',
@@ -201,20 +209,44 @@ async function verifyFiles(projectRoot) {
     '.env.example'
   ];
 
-  let allExist = true;
-  for (const file of filesToCheck) {
+  let requiredMissing = false;
+  for (const file of requiredFiles) {
     const filePath = path.join(projectRoot, file);
     try {
       await fs.access(filePath);
       logSuccess(`文件存在: ${file}`);
     } catch {
-      logError(`文件不存在: ${file}`);
-      allExist = false;
+      logError(`必要文件不存在: ${file}`);
+      requiredMissing = true;
     }
   }
 
-  if (!allExist) {
-    logError('部分升级文件不存在，请确保代码已正确更新');
+  if (requiredMissing) {
+    logError('必要文件缺失，请检查项目根目录路径是否正确');
+    process.exit(1);
+  }
+
+  const missingOptional = [];
+  for (const file of optionalFiles) {
+    const filePath = path.join(projectRoot, file);
+    try {
+      await fs.access(filePath);
+      logSuccess(`文件存在: ${file}`);
+    } catch {
+      logWarning(`文件不存在: ${file}`);
+      missingOptional.push(file);
+    }
+  }
+
+  if (missingOptional.length > 0) {
+    log('');
+    logError('v1.0.3 新增文件不存在，无法继续升级');
+    log('');
+    log('可能原因与解决方法：', 'yellow');
+    logInfo('1. 代码未更新 → 请先执行: git pull origin main');
+    logInfo('2. 项目根目录路径错误 → 重新运行脚本，输入正确的部署路径');
+    logInfo('3. 手动部署 → 请将最新代码复制到部署目录后再运行升级');
+    log('');
     process.exit(1);
   }
 }
