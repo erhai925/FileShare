@@ -24,6 +24,9 @@ const logRoutes = require('./routes/logs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 信任代理（Nginx 等反向代理场景下，从 X-Forwarded-For 获取真实客户端 IP，否则限流会误伤所有用户）
+app.set('trust proxy', 1);
+
 // 安全中间件
 app.use(helmet());
 app.use(compression());
@@ -45,11 +48,15 @@ const bodyLimit = process.env.BODY_SIZE_LIMIT || '500mb';
 app.use(express.json({ limit: bodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
-// 限流配置
+// 限流配置（上传接口单独排除，避免大文件上传失败重试时触发限流导致用户被误判）
+// 注意：限流仅返回 429，不执行任何业务逻辑，绝不修改用户密码或凭证
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15分钟
   max: parseInt(process.env.RATE_LIMIT_MAX) || 1000, // 限制每个IP 15分钟内最多1000个请求
-  message: '请求过于频繁，请稍后再试'
+  message: '请求过于频繁，请稍后再试',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/api/files/upload') // 上传相关接口不参与限流计数
 });
 app.use('/api/', limiter);
 
@@ -88,9 +95,21 @@ if (process.env.NODE_ENV === 'production') {
   const clientDist = path.join(__dirname, '..', 'client', 'dist');
   const fs = require('fs');
   if (fs.existsSync(clientDist)) {
-    app.use(express.static(clientDist));
+    // 静态资源（JS/CSS 带 hash）可缓存，index.html 禁止缓存以确保升级后用户获取新版本
+    app.use(express.static(clientDist, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+      }
+    }));
     app.get('*', (req, res, next) => {
       if (!req.path.startsWith('/api')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.sendFile(path.join(clientDist, 'index.html'));
       } else {
         next();
@@ -138,10 +157,13 @@ async function startServer() {
     await initStorageDirectories(storagePath);
     console.log(`存储目录创建成功: ${storagePath}`);
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`服务器运行在端口 ${PORT}`);
       console.log(`环境: ${process.env.NODE_ENV || 'development'}`);
     });
+    // 大文件上传超时（无 Nginx 时 Node 默认约 5 分钟，75MB 慢速网络可能超时）
+    const uploadTimeout = parseInt(process.env.UPLOAD_TIMEOUT_MS) || 600000; // 默认 10 分钟
+    server.requestTimeout = uploadTimeout;
   } catch (error) {
     console.error('服务器启动失败:', error);
     process.exit(1);

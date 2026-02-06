@@ -163,7 +163,7 @@ server {
     listen 80;
     server_name your-domain.com;  # 替换为您的域名或IP
 
-    # 大文件上传需提高限制（默认 1m，支持最大 10GB 文件）
+    # 大文件上传需提高限制（默认 1m，支持最大 10GB 文件；75MB 等大文件上传失败多为此处未配置）
     client_max_body_size 500m;
 
     # 前端静态文件
@@ -172,7 +172,7 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # 后端API
+    # 后端API（必须传递 X-Forwarded-For，否则限流会误伤所有用户）
     location /api {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
@@ -182,6 +182,8 @@ server {
         proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;   # 大文件上传/下载超时
+        proxy_send_timeout 300s;
     }
 }
 ```
@@ -346,6 +348,14 @@ htop  # 或 top
 - 检查存储目录权限
 - 检查磁盘空间：`df -h`
 - 检查文件大小限制配置
+- **75MB 等大文件上传失败**：
+  - **使用 Nginx 时**：Nginx 默认 `client_max_body_size` 仅 1m，需在 `server` 块添加 `client_max_body_size 500m;` 并重启 Nginx
+  - **未使用 Nginx 时**：Node 默认请求超时约 5 分钟，慢速网络可能超时；可设置环境变量 `UPLOAD_TIMEOUT_MS=600000`（10 分钟）延长超时；若部署在云平台，检查负载均衡/网关是否有请求体大小或超时限制
+
+### 3.1 提示「操作频繁」后无法登录
+- **原因**：限流触发，并非密码被改
+- **处理**：等待 15 分钟后重试
+- **预防**：上传接口已排除限流；使用 Nginx 时需传递 `X-Forwarded-For` 以便按真实 IP 限流
 
 ### 4. 前端无法访问
 - 检查前端是否已构建：`ls client/dist`

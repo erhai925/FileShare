@@ -39,6 +39,11 @@ api.interceptors.response.use(
       useAuthStore.getState().logout()
       window.location.href = '/login'
     }
+    // 429 限流：不触发登出，仅提示用户稍后重试（避免与密码错误混淆）
+    if (error.response?.status === 429) {
+      const msg = typeof error.response?.data === 'object' ? error.response?.data?.message : error.response?.data
+      return Promise.reject({ ...(error.response?.data || {}), message: msg || '请求过于频繁，请 15 分钟后再试' })
+    }
     return Promise.reject(error.response?.data || error)
   }
 )
