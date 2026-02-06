@@ -70,10 +70,10 @@ cd ..
 ### 使用PM2运行
 
 ```bash
-# 构建前端
-npm run client:build
+# 安装依赖（首次）
+npm install && cd client && npm install && cd ..
 
-# 使用配置文件启动（生产环境会同时托管前端）
+# 使用配置文件启动（同时启动前后端）
 npm install -g pm2
 pm2 start ecosystem.config.js
 
@@ -85,7 +85,11 @@ pm2 set pm2-logrotate:retain 30
 pm2 save
 ```
 
-生产环境访问 `http://IP:端口` 即可使用。详细部署说明请参考：`docs/deployment.md`
+- 前端访问：`http://IP:5173`
+- 后端 API：`http://IP:3000`
+- 生产环境仅后端：先 `npm run client:build`，再 `pm2 start ecosystem.config.js --only fileshare`，访问 `http://IP:3000`
+
+详细部署说明请参考：`docs/deployment.md`
 
 ## 功能清单
 

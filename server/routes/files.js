@@ -428,11 +428,13 @@ router.get('/list', authenticate, async (req, res) => {
     let sql = `SELECT f.*, 
       u1.username as creator_name, 
       u2.username as updater_name,
-      s.name as space_name, s.id as space_id
+      s.name as space_name, s.id as space_id,
+      fo.name as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN users u2 ON f.updated_by = u2.id
       LEFT JOIN spaces s ON f.space_id = s.id
+      LEFT JOIN folders fo ON f.folder_id = fo.id
       WHERE f.deleted_at IS NULL`;
     const params = [];
     

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Button, Space, Modal, Form, Input, Select, message, Table, Tag, Popconfirm, Upload, Tabs, Tree, Empty, Breadcrumb, Typography } from 'antd'
 import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FileOutlined, FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import FileActions from '../components/FileActions'
@@ -16,6 +16,7 @@ const { Title } = Typography
 
 export default function SpaceDetail() {
   const { spaceId } = useParams<{ spaceId: string }>()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const [folderModalVisible, setFolderModalVisible] = useState(false)
   const [renameFolderModalVisible, setRenameFolderModalVisible] = useState(false)
@@ -40,6 +41,15 @@ export default function SpaceDetail() {
   const [debouncedSpaceSearch, setDebouncedSpaceSearch] = useState('')
 
   const spaceIdNum = spaceId ? parseInt(spaceId) : null
+
+  // 从 URL 读取 folderId，支持直接跳转到指定文件夹
+  useEffect(() => {
+    const folderIdParam = searchParams.get('folderId')
+    if (folderIdParam) {
+      const fid = parseInt(folderIdParam)
+      if (!isNaN(fid)) setSelectedFolderId(fid)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSpaceSearch(spaceSearchKeyword), 400)

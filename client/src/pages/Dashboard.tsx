@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Row, Col, Statistic, List, Typography, Button, Space, Tag, message } from 'antd'
 import {
@@ -86,25 +85,10 @@ export default function Dashboard() {
 
   // 判断文件是否为最近一周的新文件
   const isRecentlyNew = (fileId: number) => {
-    if (!recentFiles?.data?.files) {
-      console.log('新文件标识检查 - 没有文件数据');
-      return false;
-    }
-    const isNew = recentFiles.data.files.some((f: any) => f.id === fileId);
-    if (isNew) {
-      console.log('新文件标识检查 - 文件', fileId, '是新文件');
-    }
-    return isNew;
+    if (!recentFiles?.data?.files) return false
+    return recentFiles.data.files.some((f: any) => f.id === fileId)
   }
   
-  // 调试信息
-  useEffect(() => {
-    console.log('工作台 - recentFilesList:', recentFilesList);
-    console.log('工作台 - recentFiles:', recentFiles);
-    if (recentFiles?.data?.files) {
-      console.log('工作台 - 新文件列表:', recentFiles.data.files);
-    }
-  }, [recentFilesList, recentFiles])
 
   // 处理下载
   const handleDownload = async (platform: 'mac' | 'win' | 'linux') => {
@@ -143,7 +127,14 @@ export default function Dashboard() {
 
   return (
     <div>
-      <Title level={2}>工作台</Title>
+      <Title level={2}>
+        工作台
+        {user && (
+          <span style={{ fontSize: 16, fontWeight: 'normal', color: '#666', marginLeft: 12 }}>
+            欢迎，{user.realName || user.username}
+          </span>
+        )}
+      </Title>
       
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
@@ -236,6 +227,34 @@ export default function Dashboard() {
           dataSource={recentFilesList?.data?.files || []}
           renderItem={(item: any) => {
             const isNew = isRecentlyNew(item.id)
+            const spaceLink = item.space_id ? (
+              <a
+                href={`/spaces/${item.space_id}`}
+                onClick={(e) => {
+                  e.preventDefault()
+                  navigate(`/spaces/${item.space_id}`)
+                }}
+                style={{ color: '#1890ff', marginRight: 8 }}
+              >
+                {item.space_name || '未命名空间'}
+              </a>
+            ) : (
+              <span style={{ color: '#999', marginRight: 8 }}>未分类</span>
+            )
+            const folderLink = item.folder_id && item.folder_name ? (
+              <a
+                href={`/spaces/${item.space_id}?folderId=${item.folder_id}`}
+                onClick={(e) => {
+                  e.preventDefault()
+                  navigate(`/spaces/${item.space_id}?folderId=${item.folder_id}`)
+                }}
+                style={{ color: '#1890ff' }}
+              >
+                {item.folder_name}
+              </a>
+            ) : item.space_id ? (
+              <span style={{ color: '#999' }}>根目录</span>
+            ) : null
             return (
               <List.Item>
                 <List.Item.Meta
@@ -244,7 +263,7 @@ export default function Dashboard() {
                       {isNew && (
                         <span style={{ color: '#ff4d4f', fontWeight: 'bold' }}>[新]</span>
                       )}
-                      <a 
+                      <a
                         href={`/files/${item.id}`}
                         onClick={(e) => {
                           e.preventDefault()
@@ -256,7 +275,20 @@ export default function Dashboard() {
                       </a>
                     </Space>
                   }
-                  description={`${item.creator_name} • ${formatDateTime(item.created_at)}`}
+                  description={
+                    <Space split={<span style={{ color: '#d9d9d9' }}>•</span>}>
+                      {item.space_id ? (
+                        <>
+                          <span>空间：{spaceLink}</span>
+                          {item.folder_id ? <span>文件夹：{folderLink}</span> : <span>根目录</span>}
+                        </>
+                      ) : (
+                        <span style={{ color: '#999' }}>未分类</span>
+                      )}
+                      <span>{item.creator_name}</span>
+                      <span>{formatDateTime(item.created_at)}</span>
+                    </Space>
+                  }
                 />
               </List.Item>
             )

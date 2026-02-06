@@ -20,7 +20,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const readline = require('readline');
 
-const VERSION_FILE = path.join(__dirname, 'version.json');
+const getVersionFilePath = (projectRoot) => path.join(projectRoot || path.resolve(__dirname, '..'), 'upgrades', 'version.json');
 const TARGET_VERSION = '1.0.3';
 const FROM_VERSION = '1.0.2';
 
@@ -73,19 +73,21 @@ function question(prompt, defaultValue = '') {
 }
 
 /**
- * 读取当前版本
+ * 读取当前版本（从部署路径的 version.json）
  */
-async function getCurrentVersion() {
-  const content = await fs.readFile(VERSION_FILE, 'utf8');
+async function getCurrentVersion(projectRoot) {
+  const versionFile = getVersionFilePath(projectRoot);
+  const content = await fs.readFile(versionFile, 'utf8');
   const versionInfo = JSON.parse(content);
   return versionInfo.currentVersion;
 }
 
 /**
- * 更新版本号
+ * 更新版本号（写入部署路径的 version.json）
  */
-async function updateVersion(newVersion) {
-  const content = await fs.readFile(VERSION_FILE, 'utf8');
+async function updateVersion(projectRoot, newVersion) {
+  const versionFile = getVersionFilePath(projectRoot);
+  const content = await fs.readFile(versionFile, 'utf8');
   const versionInfo = JSON.parse(content);
   const oldVersion = versionInfo.currentVersion;
 
@@ -96,15 +98,15 @@ async function updateVersion(newVersion) {
     description: `从 ${oldVersion} 升级到 ${newVersion} - 数据备份、权限展示、批量上传、PM2配置、空间搜索等`
   });
 
-  await fs.writeFile(VERSION_FILE, JSON.stringify(versionInfo, null, 2), 'utf8');
-  logSuccess(`版本已更新: ${oldVersion} -> ${newVersion}`);
+  await fs.writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf8');
+  logSuccess(`版本已更新: ${oldVersion} -> ${newVersion} (${versionFile})`);
 }
 
 /**
  * 检查当前版本
  */
-async function checkVersion() {
-  const currentVersion = await getCurrentVersion();
+async function checkVersion(projectRoot) {
+  const currentVersion = await getCurrentVersion(projectRoot);
   if (currentVersion !== FROM_VERSION) {
     logError(`版本不匹配！当前版本: ${currentVersion}, 期望版本: ${FROM_VERSION}`);
     logWarning('请确保您正在从正确的版本升级');
@@ -295,6 +297,7 @@ export function formatRelativeTime(date: string | Date): string {
 const fs = require('fs');
 const version = require('./upgrades/version.json').currentVersion || '1.0.0';
 const logsDir = path.join(__dirname, 'logs');
+const clientDir = path.join(__dirname, 'client');
 if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
 module.exports = {
   apps: [{
@@ -307,6 +310,21 @@ module.exports = {
     error_file: path.join(logsDir, 'server-error.log'),
     out_file: path.join(logsDir, 'server-out.log'),
     log_file: path.join(logsDir, 'server-combined.log'),
+    time: true,
+    merge_logs: true,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    version
+  }, {
+    name: 'fileshare-client',
+    script: 'npx',
+    args: ['vite', '--host'],
+    cwd: clientDir,
+    instances: 1,
+    exec_mode: 'fork',
+    env: { NODE_ENV: 'development' },
+    error_file: path.join(logsDir, 'client-error.log'),
+    out_file: path.join(logsDir, 'client-out.log'),
+    log_file: path.join(logsDir, 'client-combined.log'),
     time: true,
     merge_logs: true,
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
@@ -388,9 +406,9 @@ async function verifyAndPatchFiles(projectRoot) {
 /**
  * 更新版本号
  */
-async function doUpdateVersion() {
+async function doUpdateVersion(projectRoot) {
   logStep(6, '更新版本号');
-  await updateVersion(TARGET_VERSION);
+  await updateVersion(projectRoot, TARGET_VERSION);
 }
 
 /**
@@ -404,8 +422,6 @@ async function main() {
   log('========================================\n', 'blue');
 
   try {
-    await checkVersion();
-
     const paths = await getDeploymentPaths();
     log('');
     log('已配置路径:', 'yellow');
@@ -414,6 +430,8 @@ async function main() {
     logInfo(`存储路径: ${paths.storagePath}`);
     logInfo(`备份路径: ${paths.backupPath}`);
     log('');
+
+    await checkVersion(paths.projectRoot);
 
     const confirm = await question('确认以上路径并继续升级？(y/n)', 'y');
     if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
@@ -425,7 +443,7 @@ async function main() {
     await verifyAndPatchFiles(paths.projectRoot);
     await installDependencies(paths.projectRoot);
     await buildFrontend(paths.projectRoot);
-    await doUpdateVersion();
+    await doUpdateVersion(paths.projectRoot);
 
     log('\n========================================', 'green');
     log('  升级完成！', 'green');
@@ -442,7 +460,7 @@ async function main() {
     log('');
 
     log('下一步操作:', 'yellow');
-    log('1. 若使用 PM2: pm2 restart fileshare 或 pm2 start ecosystem.config.js');
+    log('1. 若使用 PM2: pm2 restart all 或 pm2 start ecosystem.config.js（前后端同时启动）');
     log('2. 若直接运行: NODE_ENV=production node server/index.js');
     log('3. 检查 .env 配置（TZ、RATE_LIMIT_MAX、CLIENT_URL 等）');
     log('');

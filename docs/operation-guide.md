@@ -803,18 +803,14 @@ npm run check-version
 #### 3.2 重启服务
 
 **操作步骤**：
-1. 启动后端服务：
+1. 使用 PM2 同时启动前后端（推荐）：
    ```bash
-   npm run server:start
+   pm2 start ecosystem.config.js
    ```
-2. 启动前端服务（开发环境）：
-   ```bash
-   npm run client:dev
-   ```
-3. 或构建前端（生产环境）：
-   ```bash
-   npm run client:build
-   ```
+2. 或分别启动：
+   - 后端：`npm run server:start` 或 `pm2 start ecosystem.config.js --only fileshare`
+   - 前端：`npm run client:dev` 或 `pm2 start ecosystem.config.js --only fileshare-client`
+3. 生产环境仅后端托管静态文件时：先 `npm run client:build`，再 `pm2 start ecosystem.config.js --only fileshare`
 
 #### 3.3 功能验证
 
@@ -1043,6 +1039,13 @@ upgrades/
 3. 存储目录是否有写权限
 4. 磁盘空间是否充足
 5. 文件大小是否超过限制
+
+### Q1.1: 上传大文件（如 65MB）报 500 错误？
+**A**: 大文件上传受多处限制，需同时满足：
+1. **Nginx 反向代理**：在 `server` 块中添加 `client_max_body_size 500m;`（默认仅 1m，见 deployment.md）
+2. **Express 请求体限制**：已默认 500mb，可通过环境变量 `BODY_SIZE_LIMIT` 调整
+3. **单文件大小**：默认最大 10GB，可通过 `MAX_FILE_SIZE` 调整
+4. **建议**：超过 100MB 的文件使用分块上传（空间/文件管理页会自动启用）
 
 ### Q2: 无法下载文件？
 **A**: 检查以下几点：

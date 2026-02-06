@@ -83,7 +83,8 @@ router.get('/', authenticate, requireAdmin, async (req, res) => {
   try {
     const { page = 1, pageSize = 50, keyword } = req.query;
     
-    let sql = `SELECT id, username, email, real_name, role, status, created_at
+    let sql = `SELECT id, username, email, real_name, role, status, created_at,
+      (SELECT COUNT(*) FROM operation_logs WHERE user_id = users.id AND action = 'login') as login_count
       FROM users WHERE 1=1`;
     const params = [];
     

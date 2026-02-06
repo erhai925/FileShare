@@ -97,14 +97,14 @@ export default function Layout() {
       label: '工作台'
     },
     {
-      key: '/files',
-      icon: <FolderOutlined />,
-      label: '文件管理'
-    },
-    {
       key: '/spaces',
       icon: <TeamOutlined />,
       label: '空间管理'
+    },
+    {
+      key: '/files',
+      icon: <FolderOutlined />,
+      label: '文件管理'
     }
   ]
 

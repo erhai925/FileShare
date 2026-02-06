@@ -169,6 +169,13 @@ export default function Admin() {
       }
     },
     { 
+      title: '登录次数', 
+      dataIndex: 'login_count', 
+      key: 'login_count',
+      width: 100,
+      render: (count: number) => count ?? 0
+    },
+    { 
       title: '创建时间', 
       dataIndex: 'created_at', 
       key: 'created_at',

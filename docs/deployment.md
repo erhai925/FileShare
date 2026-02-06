@@ -105,13 +105,16 @@ cd ..
 
 ### 7. 使用PM2运行（推荐）
 
-项目提供 `ecosystem.config.js` 配置文件，支持版本信息、分离日志、日志过期自动删除：
+项目提供 `ecosystem.config.js` 配置文件，**前后端均由 PM2 启动**，支持版本信息、分离日志、日志过期自动删除：
 
 ```bash
 # 安装PM2
 npm install -g pm2
 
-# 使用配置文件启动（生产环境会同时托管前端静态文件）
+# 安装依赖（首次部署）
+npm install && cd client && npm install && cd ..
+
+# 使用配置文件启动（同时启动前后端）
 pm2 start ecosystem.config.js
 
 # 配置日志轮转（自动删除过期日志）
@@ -128,12 +131,14 @@ pm2 save
 pm2 status
 
 # 查看日志（日志输出到项目根目录 logs/ 下）
-pm2 logs fileshare
+pm2 logs fileshare        # 后端
+pm2 logs fileshare-client # 前端
 ```
 
 **说明**：
-- 生产环境（NODE_ENV=production）下，服务端会托管前端静态文件
-- 支持 `http://IP:端口` 或 `http://域名:端口` 访问，无需单独部署前端
+- **fileshare**：后端服务（端口 3000）
+- **fileshare-client**：前端 Vite 开发服务（端口 5173），访问 `http://IP:5173` 或 `http://域名:5173`
+- 生产环境仅需后端时：先 `npm run client:build` 构建前端，再 `pm2 start ecosystem.config.js --only fileshare`，后端会托管静态文件
 - 系统时间默认使用东八区北京时间（可通过 TZ 环境变量配置）
 
 ### 8. 配置Nginx反向代理（可选但推荐）
@@ -157,6 +162,9 @@ sudo nano /etc/nginx/sites-available/fileshare
 server {
     listen 80;
     server_name your-domain.com;  # 替换为您的域名或IP
+
+    # 大文件上传需提高限制（默认 1m，支持最大 10GB 文件）
+    client_max_body_size 500m;
 
     # 前端静态文件
     location / {

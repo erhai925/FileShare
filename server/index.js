@@ -40,9 +40,10 @@ app.use(cors({
   credentials: true
 }));
 
-// 请求体解析
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// 请求体解析（需支持大文件上传，与 MAX_FILE_SIZE 10GB 对齐；超大 JSON 由业务校验）
+const bodyLimit = process.env.BODY_SIZE_LIMIT || '500mb';
+app.use(express.json({ limit: bodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
 // 限流配置
 const limiter = rateLimit({
