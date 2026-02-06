@@ -12,6 +12,7 @@
 - `upgrade-v1.0.2-to-v1.0.3.js` - 从 v1.0.2 升级到 v1.0.3（含前后端升级、部署路径交互）
 - `upgrade-v1.0.3-to-v1.0.4.js` - 从 v1.0.3 升级到 v1.0.4（大文件上传、PM2前后端、工作台优化、登录次数统计）
 - `upgrade-v1.0.4-to-v1.0.5.js` - 从 v1.0.4 升级到 v1.0.5（限流优化、大文件上传超时、429 友好提示、文档完善）
+- `upgrade-v1.0.5-to-v1.0.6.js` - 从 v1.0.5 升级到 v1.0.6（版本号更新）
 
 ## 升级脚本结构
 
@@ -31,7 +32,8 @@ npm run upgrade
 # 或运行特定版本的升级脚本
 npm run upgrade:1.0.3   # v1.0.2 -> v1.0.3
 npm run upgrade:1.0.4   # v1.0.3 -> v1.0.4
-npm run upgrade:1.0.5   # v1.0.4 -> v1.0.5（限流优化、大文件上传超时、429 友好提示）
+npm run upgrade:1.0.5   # v1.0.4 -> v1.0.5
+npm run upgrade:1.0.6   # v1.0.5 -> v1.0.6（当前最新）
 ```
 
 ## v1.0.3 升级脚本说明
@@ -75,6 +77,10 @@ npm run upgrade:1.0.5   # v1.0.4 -> v1.0.5（限流优化、大文件上传超�
 **无 Nginx 且 75MB 上传失败**：在 `.env` 添加 `UPLOAD_TIMEOUT_MS=600000` 并重启服务。
 
 **数据库迁移说明**：升级脚本会调用 `migrate-schema.js`，使用 `CREATE TABLE IF NOT EXISTS` 和 `CREATE INDEX IF NOT EXISTS` 幂等执行，仅创建缺失的表和索引，不会修改已有数据。
+
+## v1.0.6 升级脚本说明
+
+`upgrade-v1.0.5-to-v1.0.6.js` 与 v1.0.5 逻辑相同，目标版本更新为 1.0.6。适用于当前版本为 1.0.5 的部署。
 
 ## 注意事项
 
