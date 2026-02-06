@@ -85,10 +85,10 @@ export default function Dashboard() {
     queryFn: () => api.get('/files/recent-files')
   })
 
-  // 系统版本号
-  const { data: healthData } = useQuery({
-    queryKey: ['health', 'version'],
-    queryFn: () => api.get('health')
+  // 系统版本号（使用 /api/version 接口）
+  const { data: versionData } = useQuery({
+    queryKey: ['version'],
+    queryFn: () => api.get('version')
   })
 
   // 上传文件最多的前5名用户（排除 admin）
@@ -139,7 +139,7 @@ export default function Dashboard() {
     }
   }
 
-  const version = (healthData as { version?: string })?.version || '-'
+  const version = (versionData as { version?: string })?.version || '-'
   const topUploaders = topUploadersData?.data?.list || []
 
   return (

@@ -90,6 +90,16 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), version: require('../upgrades/version.json').currentVersion });
 });
 
+// 系统版本（工作台展示，与 health 分离便于单独调用）
+app.get('/api/version', (req, res) => {
+  try {
+    const v = require('../upgrades/version.json').currentVersion;
+    res.json({ success: true, version: v });
+  } catch (e) {
+    res.json({ success: false, version: '0.0.0' });
+  }
+});
+
 // 生产环境：托管前端静态文件（支持 ip:port 部署）
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.join(__dirname, '..', 'client', 'dist');
