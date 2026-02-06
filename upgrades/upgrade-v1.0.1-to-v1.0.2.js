@@ -114,7 +114,9 @@ async function backupDatabase() {
   logStep(1, '备份数据库');
   try {
     const dbPath = path.join(__dirname, '..', 'data', 'fileshare.db');
-    const backupPath = path.join(__dirname, '..', 'data', `fileshare.db.backup.${Date.now()}`);
+    const now = new Date();
+    const timeStr = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '-' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+    const backupPath = path.join(__dirname, '..', 'data', `fileshare.db.backup.${timeStr}`);
     
     // 检查数据库文件是否存在
     try {

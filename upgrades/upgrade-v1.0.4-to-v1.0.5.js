@@ -100,9 +100,13 @@ async function updateVersion(projectRoot, newVersion) {
 
 async function checkVersion(projectRoot) {
   const currentVersion = await getCurrentVersion(projectRoot);
+  if (currentVersion === TARGET_VERSION) {
+    logWarning(`当前已是 v${TARGET_VERSION}，将执行同步（覆盖文件、迁移、构建）`);
+    return;
+  }
   if (currentVersion !== FROM_VERSION) {
     logError(`版本不匹配！当前版本: ${currentVersion}, 期望版本: ${FROM_VERSION}`);
-    logWarning('请确保您正在从正确的版本升级');
+    logWarning('请确保您正在从正确的版本升级，或先运行对应的升级脚本');
     process.exit(1);
   }
   logSuccess(`当前版本检查通过: ${currentVersion}`);
@@ -144,7 +148,9 @@ async function backupDatabase(paths) {
   }
 
   await fs.mkdir(paths.backupPath, { recursive: true }).catch(() => {});
-  const backupFilePath = path.join(paths.backupPath, `fileshare.db.backup.${Date.now()}`);
+  const now = new Date();
+  const timeStr = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '-' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+  const backupFilePath = path.join(paths.backupPath, `fileshare.db.backup.${timeStr}`);
 
   await fs.copyFile(paths.dbPath, backupFilePath);
   logSuccess(`数据库已备份到: ${backupFilePath}`);
@@ -226,6 +232,11 @@ async function buildFrontend(projectRoot) {
 
 async function doUpdateVersion(projectRoot) {
   logStep(7, '更新版本号');
+  const currentVersion = await getCurrentVersion(projectRoot);
+  if (currentVersion === TARGET_VERSION) {
+    logSuccess(`版本已是 v${TARGET_VERSION}，跳过更新`);
+    return;
+  }
   await updateVersion(projectRoot, TARGET_VERSION);
 }
 

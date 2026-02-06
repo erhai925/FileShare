@@ -11,6 +11,7 @@
  * 5. 文档：操作频繁与密码误解说明、无 Nginx 部署排查、UPLOAD_TIMEOUT_MS 配置
  * 6. 工作台：系统版本号、上传排行榜前5名
  * 7. 工作台版本显示：新增 /api/version 接口，修复版本号展示错误
+ * 8. 数据库备份文件名：后缀改为当前时间 YYYYMMDD-HHmmss（如 fileshare.db.backup.20250205-143000）
  *
  * 文件覆盖：完全覆盖部署目录下的 client/src 和 server（从升级包复制）
  * 数据库迁移：执行完整 schema 同步，确保所有表、索引与当前版本一致
@@ -148,7 +149,9 @@ async function backupDatabase(paths) {
   }
 
   await fs.mkdir(paths.backupPath, { recursive: true }).catch(() => {});
-  const backupFilePath = path.join(paths.backupPath, `fileshare.db.backup.${Date.now()}`);
+  const now = new Date();
+  const timeStr = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '-' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+  const backupFilePath = path.join(paths.backupPath, `fileshare.db.backup.${timeStr}`);
 
   await fs.copyFile(paths.dbPath, backupFilePath);
   logSuccess(`数据库已备份到: ${backupFilePath}`);
@@ -282,6 +285,7 @@ async function main() {
     log('6. 429 时不再登出，仅提示「请求过于频繁，请 15 分钟后再试」');
     log('7. 工作台：系统版本号、上传排行榜前5名');
     log('8. 工作台版本显示：新增 /api/version 接口，修复版本号展示');
+    log('9. 数据库备份文件名：后缀改为当前时间 YYYYMMDD-HHmmss');
     log('');
 
     log('下一步操作:', 'yellow');

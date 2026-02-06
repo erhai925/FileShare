@@ -159,7 +159,9 @@ async function backupDatabase(paths) {
   }
 
   await fs.mkdir(paths.backupPath, { recursive: true }).catch(() => {});
-  const backupFilePath = path.join(paths.backupPath, `fileshare.db.backup.${Date.now()}`);
+  const now = new Date();
+  const timeStr = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '-' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0') + String(now.getSeconds()).padStart(2, '0');
+  const backupFilePath = path.join(paths.backupPath, `fileshare.db.backup.${timeStr}`);
 
   await fs.copyFile(paths.dbPath, backupFilePath);
   logSuccess(`数据库已备份到: ${backupFilePath}`);
