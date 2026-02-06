@@ -62,14 +62,19 @@ npm run upgrade:1.0.5   # v1.0.4 -> v1.0.5（限流优化、大文件上传超�
 
 ## v1.0.5 升级脚本说明
 
-`upgrade-v1.0.4-to-v1.0.5.js` 无数据库结构变更，包含：
+`upgrade-v1.0.4-to-v1.0.5.js` 包含文件覆盖与数据库迁移，包含：
 
+- **文件覆盖**：完全覆盖部署目录下的 `client/src` 和 `server`（从升级包复制，支持源=目标或跨路径部署）
+- **数据库迁移**：执行完整 schema 同步（`server/scripts/migrate-schema.js`），确保所有表、索引与当前版本一致
+- **时区**：保持东八区北京时间 (TZ=Asia/Shanghai)
 - 限流优化：信任代理、上传接口排除限流、限流绝不修改用户密码
 - 大文件上传：无 Nginx 时支持 `UPLOAD_TIMEOUT_MS` 延长超时
 - 前端 429 处理：限流时不登出，仅提示「请求过于频繁，请 15 分钟后再试」
-- 文档：操作频繁与密码误解说明、无 Nginx 部署排查
+- 工作台：系统版本号、上传排行榜前5名
 
 **无 Nginx 且 75MB 上传失败**：在 `.env` 添加 `UPLOAD_TIMEOUT_MS=600000` 并重启服务。
+
+**数据库迁移说明**：升级脚本会调用 `migrate-schema.js`，使用 `CREATE TABLE IF NOT EXISTS` 和 `CREATE INDEX IF NOT EXISTS` 幂等执行，仅创建缺失的表和索引，不会修改已有数据。
 
 ## 注意事项
 

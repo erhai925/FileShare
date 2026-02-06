@@ -9,8 +9,11 @@
  * 3. 大文件上传：无 Nginx 时支持 UPLOAD_TIMEOUT_MS 延长 Node 请求超时（默认 10 分钟）
  * 4. 前端 429 处理：限流时不触发登出，仅提示「请求过于频繁，请 15 分钟后再试」
  * 5. 文档：操作频繁与密码误解说明、无 Nginx 部署排查、UPLOAD_TIMEOUT_MS 配置
+ * 6. 工作台：系统版本号、上传排行榜前5名
  *
- * 无数据库结构变更。
+ * 文件覆盖：完全覆盖部署目录下的 client/src 和 server（从升级包复制）
+ * 数据库迁移：执行完整 schema 同步，确保所有表、索引与当前版本一致
+ * 时区：保持东八区北京时间 (TZ=Asia/Shanghai)
  */
 
 const fs = require('fs').promises;
@@ -18,7 +21,11 @@ const path = require('path');
 const { execSync } = require('child_process');
 const readline = require('readline');
 
+// 保持东八区北京时间
+process.env.TZ = process.env.TZ || 'Asia/Shanghai';
+
 const getVersionFilePath = (projectRoot) => path.join(projectRoot || path.resolve(__dirname, '..'), 'upgrades', 'version.json');
+const SOURCE_ROOT = path.resolve(__dirname, '..'); // 升级包/新代码所在目录
 const TARGET_VERSION = '1.0.5';
 const FROM_VERSION = '1.0.4';
 
@@ -107,11 +114,12 @@ async function getDeploymentPaths() {
   const defaultDbPath = path.join(projectRoot, 'data', 'fileshare.db');
   const defaultBackupPath = path.join(projectRoot, 'backups');
 
-  logInfo(`当前脚本所在项目根目录: ${projectRoot}`);
+  logInfo(`升级包/新代码目录: ${SOURCE_ROOT}`);
+  logInfo(`默认部署目录: ${projectRoot}`);
   logInfo('若部署路径与上述相同，直接回车即可');
   log('');
 
-  const projectRootInput = await question('项目部署根目录（代码所在路径）', projectRoot);
+  const projectRootInput = await question('项目部署根目录（将覆盖其 client/src 和 server）', projectRoot);
   const resolvedProjectRoot = path.resolve(projectRootInput);
 
   const dbPathInput = await question('数据库文件路径 (DB_PATH)', path.join(resolvedProjectRoot, 'data', 'fileshare.db'));
@@ -141,24 +149,82 @@ async function backupDatabase(paths) {
   logSuccess(`数据库已备份到: ${backupFilePath}`);
 }
 
+/**
+ * 完全覆盖部署目录下的 client/src 和 server（从升级包复制到部署路径）
+ * 使用临时目录避免源=目标时自覆盖问题
+ */
+async function overwriteClientAndServer(paths) {
+  logStep(2, '覆盖 client/src 和 server 目录');
+
+  const targetRoot = paths.projectRoot;
+  const srcClientSrc = path.join(SOURCE_ROOT, 'client', 'src');
+  const srcServer = path.join(SOURCE_ROOT, 'server');
+  const targetClientSrc = path.join(targetRoot, 'client', 'src');
+  const targetServer = path.join(targetRoot, 'server');
+
+  try {
+    await fs.access(srcClientSrc);
+    await fs.access(srcServer);
+  } catch (err) {
+    throw new Error(`升级包目录不完整，缺少 client/src 或 server，请确保从完整升级包运行。路径: ${SOURCE_ROOT}`);
+  }
+
+  const tempDir = path.join(targetRoot, '.upgrade-temp-' + Date.now());
+
+  try {
+    await fs.mkdir(tempDir, { recursive: true });
+
+    // 复制到临时目录
+    await fs.cp(srcClientSrc, path.join(tempDir, 'client_src'), { recursive: true, force: true });
+    await fs.cp(srcServer, path.join(tempDir, 'server'), { recursive: true, force: true });
+
+    // 删除目标并替换
+    await fs.rm(targetClientSrc, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(targetRoot, 'client'), { recursive: true });
+    await fs.rename(path.join(tempDir, 'client_src'), targetClientSrc);
+
+    await fs.rm(targetServer, { recursive: true, force: true }).catch(() => {});
+    await fs.rename(path.join(tempDir, 'server'), targetServer);
+
+    logSuccess('client/src 和 server 已完全覆盖');
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function runDatabaseMigrations(paths) {
+  logStep(3, '数据库迁移：同步 schema（新建表、索引等）');
+
+  try {
+    await fs.access(paths.dbPath);
+  } catch {
+    logWarning('数据库文件不存在，跳过迁移');
+    return;
+  }
+
+  const { runMigrations } = require(path.join(paths.projectRoot, 'server', 'scripts', 'migrate-schema.js'));
+  await runMigrations(paths.dbPath);
+  logSuccess('数据库 schema 迁移完成');
+}
+
 async function installDependencies(projectRoot) {
-  logStep(2, '安装后端依赖');
+  logStep(4, '安装后端依赖');
   execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
   logSuccess('后端依赖安装完成');
 
-  logStep(3, '安装前端依赖');
+  logStep(5, '安装前端依赖');
   execSync('npm install', { cwd: path.join(projectRoot, 'client'), stdio: 'inherit' });
   logSuccess('前端依赖安装完成');
 }
 
 async function buildFrontend(projectRoot) {
-  logStep(4, '构建前端');
+  logStep(6, '构建前端');
   execSync('npm run client:build', { cwd: projectRoot, stdio: 'inherit' });
   logSuccess('前端构建完成');
 }
 
 async function doUpdateVersion(projectRoot) {
-  logStep(5, '更新版本号');
+  logStep(7, '更新版本号');
   await updateVersion(projectRoot, TARGET_VERSION);
 }
 
@@ -166,7 +232,7 @@ async function main() {
   log('\n========================================', 'blue');
   log('  FileShare 系统升级脚本', 'blue');
   log(`  从 ${FROM_VERSION} 升级到 ${TARGET_VERSION}`, 'blue');
-  log('  无数据库结构变更', 'blue');
+  log('  含数据库 schema 迁移（新建表、索引等）', 'blue');
   log('========================================\n', 'blue');
 
   try {
@@ -187,6 +253,8 @@ async function main() {
     }
 
     await backupDatabase(paths);
+    await overwriteClientAndServer(paths);
+    await runDatabaseMigrations(paths);
     await installDependencies(paths.projectRoot);
     await buildFrontend(paths.projectRoot);
     await doUpdateVersion(paths.projectRoot);
@@ -196,11 +264,13 @@ async function main() {
     log('========================================\n', 'green');
 
     log('本次更新内容:', 'yellow');
-    log('1. 限流优化：上传接口排除限流，信任代理正确识别 IP');
-    log('2. 限流仅返回 429，绝不修改用户密码');
-    log('3. 大文件上传：无 Nginx 时可设 UPLOAD_TIMEOUT_MS=600000 延长超时');
-    log('4. 429 时不再登出，仅提示「请求过于频繁，请 15 分钟后再试」');
-    log('5. 文档：操作频繁与密码误解说明、无 Nginx 部署排查');
+    log('1. 文件覆盖：client/src 和 server 已完全替换为新版本');
+    log('2. 数据库：执行完整 schema 迁移，确保所有表、索引与当前版本一致');
+    log('3. 限流优化：上传接口排除限流，信任代理正确识别 IP');
+    log('4. 限流仅返回 429，绝不修改用户密码');
+    log('5. 大文件上传：无 Nginx 时可设 UPLOAD_TIMEOUT_MS=600000 延长超时');
+    log('6. 429 时不再登出，仅提示「请求过于频繁，请 15 分钟后再试」');
+    log('7. 工作台：系统版本号、上传排行榜前5名');
     log('');
 
     log('下一步操作:', 'yellow');

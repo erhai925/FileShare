@@ -7,7 +7,9 @@ import {
   CloudUploadOutlined,
   DownloadOutlined,
   WindowsOutlined,
-  AppleOutlined
+  AppleOutlined,
+  TrophyOutlined,
+  InfoCircleOutlined
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
@@ -83,6 +85,18 @@ export default function Dashboard() {
     queryFn: () => api.get('/files/recent-files')
   })
 
+  // 系统版本号
+  const { data: healthData } = useQuery({
+    queryKey: ['health', 'version'],
+    queryFn: () => api.get('health')
+  })
+
+  // 上传文件最多的前5名用户（排除 admin）
+  const { data: topUploadersData } = useQuery({
+    queryKey: ['files', 'top-uploaders'],
+    queryFn: () => api.get('/files/top-uploaders')
+  })
+
   // 判断文件是否为最近一周的新文件
   const isRecentlyNew = (fileId: number) => {
     if (!recentFiles?.data?.files) return false
@@ -125,6 +139,9 @@ export default function Dashboard() {
     }
   }
 
+  const version = (healthData as { version?: string })?.version || '-'
+  const topUploaders = topUploadersData?.data?.list || []
+
   return (
     <div>
       <Title level={2}>
@@ -134,6 +151,9 @@ export default function Dashboard() {
             欢迎，{user.realName || user.username}
           </span>
         )}
+        <span style={{ fontSize: 14, fontWeight: 'normal', color: '#999', marginLeft: 12 }}>
+          <InfoCircleOutlined /> 系统版本 v{version}
+        </span>
       </Title>
       
       <Row gutter={16} style={{ marginBottom: 24 }}>
@@ -177,6 +197,37 @@ export default function Dashboard() {
           </Col>
         )}
       </Row>
+
+      {topUploaders.length > 0 && (
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={24}>
+            <Card
+              title={
+                <Space>
+                  <TrophyOutlined />
+                  上传排行榜（前5名）
+                </Space>
+              }
+            >
+              <List
+                size="small"
+                dataSource={topUploaders}
+                renderItem={(item: any, index: number) => (
+                  <List.Item>
+                    <Space>
+                      <span style={{ color: '#faad14', fontWeight: 'bold', minWidth: 20 }}>
+                        {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}
+                      </span>
+                      <span>{item.realName}</span>
+                      <span style={{ color: '#999' }}>上传 {item.uploadCount} 个文件</span>
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={24}>

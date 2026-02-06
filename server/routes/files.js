@@ -429,12 +429,11 @@ router.get('/list', authenticate, async (req, res) => {
       u1.username as creator_name, 
       u2.username as updater_name,
       s.name as space_name, s.id as space_id,
-      fo.name as folder_name
+      (SELECT name FROM folders WHERE id = f.folder_id LIMIT 1) as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN users u2 ON f.updated_by = u2.id
       LEFT JOIN spaces s ON f.space_id = s.id
-      LEFT JOIN folders fo ON f.folder_id = fo.id
       WHERE f.deleted_at IS NULL`;
     const params = [];
     
@@ -608,7 +607,8 @@ router.get('/trash/list', authenticate, async (req, res) => {
     let sql = `SELECT f.*, 
       u1.username as creator_name, 
       u2.username as updater_name,
-      s.name as space_name
+      s.name as space_name,
+      (SELECT name FROM folders WHERE id = f.folder_id LIMIT 1) as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN users u2 ON f.updated_by = u2.id
@@ -922,7 +922,8 @@ router.get('/recent-updates', authenticate, async (req, res) => {
     let sql = `SELECT f.*, 
       u1.username as creator_name, 
       u2.username as updater_name,
-      s.name as space_name
+      s.name as space_name,
+      (SELECT name FROM folders WHERE id = f.folder_id LIMIT 1) as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN users u2 ON f.updated_by = u2.id
@@ -1002,7 +1003,8 @@ router.get('/recent-files', authenticate, async (req, res) => {
       f.created_at, f.updated_at, f.deleted_at,
       u1.username as creator_name, 
       u2.username as updater_name,
-      s.name as space_name
+      s.name as space_name,
+      (SELECT name FROM folders WHERE id = f.folder_id LIMIT 1) as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN users u2 ON f.updated_by = u2.id
@@ -1065,6 +1067,29 @@ router.get('/recent-files', authenticate, async (req, res) => {
   } catch (error) {
     console.error('获取最近新文件失败:', error);
     res.status(500).json({ success: false, message: '获取最近新文件失败' });
+  }
+});
+
+// 获取上传文件最多的前5名用户（排除 admin，显示真实姓名）
+router.get('/top-uploaders', authenticate, async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT u.real_name, u.username, COUNT(f.id) as upload_count
+       FROM files f
+       JOIN users u ON f.created_by = u.id
+       WHERE f.deleted_at IS NULL AND u.username != 'admin'
+       GROUP BY f.created_by
+       ORDER BY upload_count DESC
+       LIMIT 5`
+    );
+    const list = rows.map(r => ({
+      realName: r.real_name || r.username,
+      uploadCount: r.upload_count
+    }));
+    res.json({ success: true, data: { list } });
+  } catch (error) {
+    console.error('获取上传排行榜失败:', error);
+    res.status(500).json({ success: false, message: '获取上传排行榜失败' });
   }
 });
 

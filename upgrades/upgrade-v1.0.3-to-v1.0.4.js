@@ -10,9 +10,9 @@
  * 4. 工作台最近文件显示所在空间/文件夹，可点击进入
  * 5. 空间详情页支持 ?folderId= 直接定位文件夹
  * 6. 工作台显示当前登录者真实姓名
- * 7. 用户管理增加登录次数统计
+ * 7. 用户管理增加登录次数统计（依赖 operation_logs 表）
  *
- * 本脚本包含前端构建与版本更新，无数据库结构变更。
+ * 数据库迁移：执行完整 schema 同步，确保所有表、索引与当前版本一致
  */
 
 const fs = require('fs').promises;
@@ -143,24 +143,42 @@ async function backupDatabase(paths) {
   logSuccess(`数据库已备份到: ${backupFilePath}`);
 }
 
+/**
+ * 执行完整数据库 schema 迁移（新建表、索引等，与 database.js 保持一致）
+ */
+async function runDatabaseMigrations(paths) {
+  logStep(2, '数据库迁移：同步 schema（新建表、索引等）');
+
+  try {
+    await fs.access(paths.dbPath);
+  } catch {
+    logWarning('数据库文件不存在，跳过迁移');
+    return;
+  }
+
+  const { runMigrations } = require(path.join(paths.projectRoot, 'server', 'scripts', 'migrate-schema.js'));
+  await runMigrations(paths.dbPath);
+  logSuccess('数据库 schema 迁移完成');
+}
+
 async function installDependencies(projectRoot) {
-  logStep(2, '安装后端依赖');
+  logStep(3, '安装后端依赖');
   execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
   logSuccess('后端依赖安装完成');
 
-  logStep(3, '安装前端依赖');
+  logStep(4, '安装前端依赖');
   execSync('npm install', { cwd: path.join(projectRoot, 'client'), stdio: 'inherit' });
   logSuccess('前端依赖安装完成');
 }
 
 async function buildFrontend(projectRoot) {
-  logStep(4, '构建前端');
+  logStep(5, '构建前端');
   execSync('npm run client:build', { cwd: projectRoot, stdio: 'inherit' });
   logSuccess('前端构建完成');
 }
 
 async function doUpdateVersion(projectRoot) {
-  logStep(5, '更新版本号');
+  logStep(6, '更新版本号');
   await updateVersion(projectRoot, TARGET_VERSION);
 }
 
@@ -189,6 +207,7 @@ async function main() {
     }
 
     await backupDatabase(paths);
+    await runDatabaseMigrations(paths);
     await installDependencies(paths.projectRoot);
     await buildFrontend(paths.projectRoot);
     await doUpdateVersion(paths.projectRoot);
@@ -207,8 +226,9 @@ async function main() {
     log('');
 
     log('下一步操作:', 'yellow');
-    log('1. 若使用 PM2: pm2 restart all 或 pm2 start ecosystem.config.js');
+    log('1. 重启服务: pm2 restart all 或 pm2 start ecosystem.config.js');
     log('2. 若使用 Nginx: 确保配置 client_max_body_size 500m;');
+    log('3. 若页面仍为旧版: 浏览器强制刷新 Ctrl+Shift+R (Win) 或 Cmd+Shift+R (Mac)');
     log('');
   } catch (error) {
     logError(`\n升级失败: ${error.message}`);
