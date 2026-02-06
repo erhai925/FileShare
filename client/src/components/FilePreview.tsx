@@ -15,7 +15,7 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
   const [loading, setLoading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewable, setPreviewable] = useState(true)
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [, setDownloadUrl] = useState<string | null>(null)
   const [actualMimeType, setActualMimeType] = useState<string | null>(null)
   const [previewType, setPreviewType] = useState<string | null>(null) // 'image' | 'pdf' | 'office'
   const [previewError, setPreviewError] = useState<string | null>(null) // 预览错误信息

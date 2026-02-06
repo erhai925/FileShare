@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { Tabs, Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Alert, Popconfirm } from 'antd'
-import { UserOutlined, FileTextOutlined, SettingOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined, DeleteOutlined, KeyOutlined } from '@ant-design/icons'
+import { UserOutlined, FileTextOutlined, SettingOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined, DeleteOutlined, KeyOutlined, CloudOutlined, DownloadOutlined, RollbackOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../services/api'
+import { useAuthStore } from '../stores/authStore'
+import { formatDateTime } from '../utils/date'
 
 const { Option } = Select
 
@@ -170,7 +172,7 @@ export default function Admin() {
       title: '创建时间', 
       dataIndex: 'created_at', 
       key: 'created_at',
-      render: (time: string) => time ? new Date(time).toLocaleString() : '-'
+      render: (time: string) => formatDateTime(time)
     },
     {
       title: '操作',
@@ -239,7 +241,7 @@ export default function Admin() {
       title: '时间', 
       dataIndex: 'created_at', 
       key: 'created_at',
-      render: (time: string) => time ? new Date(time).toLocaleString() : '-'
+      render: (time: string) => formatDateTime(time)
     }
   ]
 
@@ -304,6 +306,16 @@ export default function Admin() {
                 }}
               />
             )
+          },
+          {
+            key: 'backup',
+            label: (
+              <span>
+                <CloudOutlined />
+                数据备份
+              </span>
+            ),
+            children: <BackupSettings />
           },
           {
             key: 'settings',
@@ -519,6 +531,136 @@ export default function Admin() {
           </Form.Item>
         </Form>
       </Modal>
+    </div>
+  )
+}
+
+// 数据备份组件
+function BackupSettings() {
+  const { data: backupsData, refetch } = useQuery({
+    queryKey: ['admin-backups'],
+    queryFn: () => api.get('/admin/backups')
+  })
+  const backupMutation = useMutation({
+    mutationFn: () => api.post('/admin/backup'),
+    onSuccess: () => {
+      message.success('备份完成')
+      refetch()
+    },
+    onError: (error: any) => {
+      message.error(error.message || '备份失败')
+    }
+  })
+  const restoreMutation = useMutation({
+    mutationFn: (filename: string) => api.post('/admin/backups/restore', { filename }),
+    onSuccess: () => {
+      message.success('数据恢复成功，请刷新页面')
+      refetch()
+      setTimeout(() => window.location.reload(), 1500)
+    },
+    onError: (error: any) => {
+      message.error(error.message || '恢复失败')
+    }
+  })
+  const backups = backupsData?.data || []
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+  }
+  const { token } = useAuthStore()
+  const handleDownload = async (filename: string) => {
+    try {
+      const res = await fetch(`/api/admin/backups/${filename}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+      if (!res.ok) throw new Error('下载失败')
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(a.href)
+      message.success('下载成功')
+    } catch (e: any) {
+      message.error(e.message || '下载失败')
+    }
+  }
+  return (
+    <div>
+      <Card title="数据备份" style={{ marginBottom: 16 }}>
+        <Alert
+          message="备份说明"
+          description="备份包含数据库和存储文件。备份文件保存在项目根目录下的 backups 文件夹中。恢复操作将覆盖当前数据，请谨慎操作。建议定期备份重要数据。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <div style={{ marginBottom: 16 }}>
+          <Button
+            type="primary"
+            icon={<CloudOutlined />}
+            onClick={() => backupMutation.mutate()}
+            loading={backupMutation.isPending}
+          >
+            立即备份
+          </Button>
+        </div>
+        <Table
+          columns={[
+            { title: '文件名', dataIndex: 'filename', key: 'filename' },
+            {
+              title: '大小',
+              dataIndex: 'size',
+              key: 'size',
+              render: (v: number) => formatSize(v)
+            },
+            {
+              title: '创建时间',
+              dataIndex: 'createdAt',
+              key: 'createdAt',
+              render: (v: string) => formatDateTime(v)
+            },
+            {
+              title: '操作',
+              key: 'action',
+              render: (_: any, record: any) => (
+                <Space>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    onClick={() => handleDownload(record.filename)}
+                  >
+                    下载
+                  </Button>
+                  <Popconfirm
+                    title="确定要恢复此备份吗？"
+                    description="恢复将覆盖当前所有数据，此操作不可撤销。建议先备份当前数据。"
+                    onConfirm={() => restoreMutation.mutate(record.filename)}
+                    okText="确定恢复"
+                    cancelText="取消"
+                    okType="danger"
+                  >
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<RollbackOutlined />}
+                      loading={restoreMutation.isPending}
+                    >
+                      恢复
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              )
+            }
+          ]}
+          dataSource={backups}
+          rowKey="filename"
+          pagination={false}
+          locale={{ emptyText: '暂无备份，点击上方按钮创建' }}
+        />
+      </Card>
     </div>
   )
 }

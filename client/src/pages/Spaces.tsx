@@ -5,6 +5,7 @@ import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, FileOutlin
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
+import { formatDateTime } from '../utils/date'
 
 const { Option } = Select
 
@@ -492,7 +493,7 @@ export default function Spaces() {
               <div><strong>空间类型：</strong>{spaceTypeMap[selectedSpace.type] || selectedSpace.type}</div>
               <div style={{ marginTop: 8 }}>
                 <strong>创建时间：</strong>
-                {new Date(selectedSpace.created_at).toLocaleString()}
+                {formatDateTime(selectedSpace.created_at)}
               </div>
               {selectedSpace.owner_name && (
                 <div style={{ marginTop: 8 }}>

@@ -1,9 +1,13 @@
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
+
+// 默认使用东八区北京时间
+process.env.TZ = process.env.TZ || 'Asia/Shanghai';
 
 const db = require('./config/database');
 const authRoutes = require('./routes/auth');
@@ -24,9 +28,15 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(compression());
 
-// CORS配置
+// CORS配置 - 支持 localhost、ip:port 等多种访问方式
+const clientUrls = (process.env.CLIENT_URL || 'http://localhost:5173').split(',').map(u => u.trim());
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // 同源或非浏览器请求
+    if (clientUrls.includes('*') || process.env.NODE_ENV === 'production') return callback(null, true); // 生产环境兼容 ip:port
+    const allowed = clientUrls.some(url => origin === url.trim() || origin.startsWith(url.trim().replace(/\/$/, '')));
+    callback(null, allowed);
+  },
   credentials: true
 }));
 
@@ -37,7 +47,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // 限流配置
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15分钟
-  max: 100, // 限制每个IP 15分钟内最多100个请求
+  max: parseInt(process.env.RATE_LIMIT_MAX) || 1000, // 限制每个IP 15分钟内最多1000个请求
   message: '请求过于频繁，请稍后再试'
 });
 app.use('/api/', limiter);
@@ -69,8 +79,24 @@ app.use('/api/logs', logRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: require('../upgrades/version.json').currentVersion });
 });
+
+// 生产环境：托管前端静态文件（支持 ip:port 部署）
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '..', 'client', 'dist');
+  const fs = require('fs');
+  if (fs.existsSync(clientDist)) {
+    app.use(express.static(clientDist));
+    app.get('*', (req, res, next) => {
+      if (!req.path.startsWith('/api')) {
+        res.sendFile(path.join(clientDist, 'index.html'));
+      } else {
+        next();
+      }
+    });
+  }
+}
 
 // 错误处理中间件
 app.use((err, req, res, next) => {

@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
-const { authenticate, checkPermission } = require('../middleware/auth');
+const { authenticate, checkPermission, getBatchFilePermissions } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
 const { encryptFile, decryptFile, generateHash, getEncryptionMode } = require('../utils/encryption');
 const db = require('../config/database');
@@ -485,8 +485,10 @@ router.get('/list', authenticate, async (req, res) => {
     sql += ` ORDER BY f.updated_at DESC LIMIT ? OFFSET ?`;
     params.push(parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize));
     
-    const files = await db.query(sql, params);
-    
+    let files = await db.query(sql, params);
+    const permMap = await getBatchFilePermissions(req.user.id, files);
+    files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
+
     // 获取总数
     let countSql = `SELECT COUNT(*) as total FROM files f WHERE f.deleted_at IS NULL`;
     const countParams = [];
@@ -626,7 +628,9 @@ router.get('/trash/list', authenticate, async (req, res) => {
     console.log('回收站查询参数:', params);
     console.log('当前用户:', { id: req.user.id, role: req.user.role, username: req.user.username });
     
-    const files = await db.query(sql, params);
+    let files = await db.query(sql, params);
+    const permMap = await getBatchFilePermissions(req.user.id, files);
+    files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
     
     console.log('回收站查询结果数量:', files?.length || 0);
     if (files && files.length > 0) {

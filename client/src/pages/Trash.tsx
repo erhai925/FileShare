@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Table, Button, Space, message, Popconfirm, Tag } from 'antd'
-import { DeleteOutlined, RollbackOutlined, ClearOutlined } from '@ant-design/icons'
+import { RollbackOutlined, ClearOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-// import { useAuthStore } from '../stores/authStore' // 暂时未使用
 import api from '../services/api'
+import TrashActions from '../components/TrashActions'
+import { formatDateTime } from '../utils/date'
 
 export default function Trash() {
   const [currentPage, setCurrentPage] = useState(1)
@@ -111,40 +112,17 @@ export default function Trash() {
       title: '删除时间',
       dataIndex: 'deleted_at',
       key: 'deleted_at',
-      render: (time: string) => new Date(time).toLocaleString()
+      render: (time: string) => formatDateTime(time)
     },
     {
       title: '操作',
       key: 'action',
       render: (_: any, record: any) => (
-        <Space>
-          <Popconfirm
-            title="确定要恢复此文件吗？"
-            onConfirm={() => handleRestore(record.id)}
-          >
-            <Button 
-              type="link" 
-              size="small"
-              icon={<RollbackOutlined />}
-            >
-              恢复
-            </Button>
-          </Popconfirm>
-          <Popconfirm
-            title="确定要永久删除此文件吗？此操作不可恢复！"
-            onConfirm={() => handlePermanentDelete(record.id)}
-            okType="danger"
-          >
-            <Button 
-              type="link" 
-              size="small" 
-              danger
-              icon={<DeleteOutlined />}
-            >
-              永久删除
-            </Button>
-          </Popconfirm>
-        </Space>
+        <TrashActions
+          record={record}
+          onRestore={handleRestore}
+          onPermanentDelete={handlePermanentDelete}
+        />
       )
     }
   ]

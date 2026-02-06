@@ -75,6 +75,12 @@ PORT=3000
 
 # 配置存储路径
 STORAGE_PATH=/var/fileshare/storage
+
+# 时区（默认东八区北京时间）
+TZ=Asia/Shanghai
+
+# 限流（每IP 15分钟内最大请求数，默认1000）
+RATE_LIMIT_MAX=1000
 ```
 
 ### 5. 初始化数据库
@@ -99,12 +105,20 @@ cd ..
 
 ### 7. 使用PM2运行（推荐）
 
+项目提供 `ecosystem.config.js` 配置文件，支持版本信息、分离日志、日志过期自动删除：
+
 ```bash
 # 安装PM2
 npm install -g pm2
 
-# 启动服务
-pm2 start server/index.js --name fileshare
+# 使用配置文件启动（生产环境会同时托管前端静态文件）
+pm2 start ecosystem.config.js
+
+# 配置日志轮转（自动删除过期日志）
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 30
+pm2 set pm2-logrotate:compress true
 
 # 设置开机自启
 pm2 startup
@@ -113,9 +127,14 @@ pm2 save
 # 查看状态
 pm2 status
 
-# 查看日志
+# 查看日志（日志输出到项目根目录 logs/ 下）
 pm2 logs fileshare
 ```
+
+**说明**：
+- 生产环境（NODE_ENV=production）下，服务端会托管前端静态文件
+- 支持 `http://IP:端口` 或 `http://域名:端口` 访问，无需单独部署前端
+- 系统时间默认使用东八区北京时间（可通过 TZ 环境变量配置）
 
 ### 8. 配置Nginx反向代理（可选但推荐）
 
@@ -257,12 +276,19 @@ sudo ufw reload
 
 ## 五、数据备份
 
-### 手动备份
+### 管理后台备份（推荐）
+
+1. 登录管理后台，进入 **系统管理** > **数据备份**
+2. 点击「立即备份」创建备份
+3. 备份完成后可下载或恢复
+4. 恢复：点击备份的「恢复」按钮，确认后覆盖当前数据
+
+备份文件保存在项目根目录 `backups/` 文件夹中。
+
+### 命令行备份
 ```bash
 npm run backup
 ```
-
-备份文件将保存在 `backups/` 目录。
 
 ### 自动备份（Linux Cron）
 

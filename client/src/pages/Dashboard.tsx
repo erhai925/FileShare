@@ -13,6 +13,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
+import { formatDateTime } from '../utils/date'
 
 const { Title } = Typography
 
@@ -255,7 +256,7 @@ export default function Dashboard() {
                       </a>
                     </Space>
                   }
-                  description={`${item.creator_name} • ${new Date(item.created_at).toLocaleString()}`}
+                  description={`${item.creator_name} • ${formatDateTime(item.created_at)}`}
                 />
               </List.Item>
             )

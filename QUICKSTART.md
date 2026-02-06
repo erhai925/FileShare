@@ -17,10 +17,13 @@ cd ..
 ### 2. 配置环境
 
 ```bash
-# 复制环境变量模板（如果.env.example存在）
-# 或手动创建.env文件，配置以下关键项：
+# 复制环境变量模板
+cp .env.example .env
+
+# 编辑 .env 文件，配置以下关键项：
 # JWT_SECRET=your-secret-key
 # ENCRYPTION_KEY=your-32-char-encryption-key
+# TZ=Asia/Shanghai  # 时区，默认东八区北京时间
 ```
 
 ### 3. 初始化数据库
@@ -67,12 +70,22 @@ cd ..
 ### 使用PM2运行
 
 ```bash
+# 构建前端
+npm run client:build
+
+# 使用配置文件启动（生产环境会同时托管前端）
 npm install -g pm2
-pm2 start server/index.js --name fileshare
+pm2 start ecosystem.config.js
+
+# 配置日志轮转（可选）
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 30
+
 pm2 save
 ```
 
-详细部署说明请参考：`docs/deployment.md`
+生产环境访问 `http://IP:端口` 即可使用。详细部署说明请参考：`docs/deployment.md`
 
 ## 功能清单
 
@@ -87,10 +100,11 @@ pm2 save
 - 文件评论（@成员提醒）
 - 文件搜索（多条件组合）
 - 操作日志（90天保留）
-- 管理员后台（用户管理/日志查看/系统配置）
+- 管理员后台（用户管理/日志查看/系统配置/数据备份与恢复）
 - 文件加密存储（AES-256）
 - 回收站功能
 - 断点续传优化（分块上传、暂停/恢复、进度显示）
+- 批量文件上传
 - 在线预览（PDF、图片预览，Office文档提示下载）
 - 桌面客户端（Electron，支持系统托盘、本地文件选择）
 
@@ -98,7 +112,7 @@ pm2 save
 - 移动端APP（React Native）
 - 第三方登录（企业微信/钉钉）
 - 文件命名规则验证
-- 自动备份任务
+- 自动备份任务（管理后台支持手动备份与恢复）
 - Office文档在线预览（需要集成转换服务）
 
 ## 项目结构

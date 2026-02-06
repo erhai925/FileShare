@@ -289,5 +289,194 @@ router.post('/storage/test', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+// 数据备份 - 触发备份
+router.post('/backup', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const fs = require('fs').promises;
+    const path = require('path');
+    const archiver = require('archiver');
+    const { getStoragePath } = require('../utils/storage');
+
+    const backupDir = path.join(process.cwd(), 'backups');
+    await fs.mkdir(backupDir, { recursive: true });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const backupName = `backup-${timestamp}`;
+    const backupPath = path.join(backupDir, `${backupName}.zip`);
+
+    const output = require('fs').createWriteStream(backupPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    const finishPromise = new Promise((resolve, reject) => {
+      output.on('close', () => resolve());
+      archive.on('error', reject);
+    });
+
+    archive.pipe(output);
+
+    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data', 'fileshare.db');
+    if (await fs.access(dbPath).then(() => true).catch(() => false)) {
+      archive.file(dbPath, { name: 'fileshare.db' });
+    }
+
+    const storagePath = await getStoragePath();
+    if (await fs.access(storagePath).then(() => true).catch(() => false)) {
+      archive.directory(storagePath, 'storage');
+    }
+
+    await archive.finalize();
+    await finishPromise;
+
+    await logOperation(req.user.id, 'create_backup', 'system', null, {
+      backupPath,
+      size: archive.pointer()
+    }, req);
+
+    res.json({
+      success: true,
+      message: '备份完成',
+      data: { filename: `${backupName}.zip` }
+    });
+  } catch (error) {
+    console.error('备份失败:', error);
+    res.status(500).json({ success: false, message: '备份失败: ' + error.message });
+  }
+});
+
+// 数据备份 - 获取备份列表
+router.get('/backups', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const fs = require('fs').promises;
+    const path = require('path');
+    const backupDir = path.join(process.cwd(), 'backups');
+
+    await fs.mkdir(backupDir, { recursive: true });
+    const files = await fs.readdir(backupDir);
+    const backups = await Promise.all(
+      files
+        .filter(f => f.endsWith('.zip'))
+        .map(async (f) => {
+          const stat = await fs.stat(path.join(backupDir, f));
+          return {
+            filename: f,
+            size: stat.size,
+            createdAt: stat.mtime
+          };
+        })
+    );
+    backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    res.json({ success: true, data: backups });
+  } catch (error) {
+    console.error('获取备份列表失败:', error);
+    res.status(500).json({ success: false, message: '获取备份列表失败' });
+  }
+});
+
+// 数据备份 - 下载备份文件
+router.get('/backups/:filename', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const path = require('path');
+    const { filename } = req.params;
+    if (!filename || !filename.endsWith('.zip') || filename.includes('..')) {
+      return res.status(400).json({ success: false, message: '无效的文件名' });
+    }
+    const filePath = path.join(process.cwd(), 'backups', filename);
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: '备份文件不存在' });
+    }
+    res.download(filePath, filename);
+  } catch (error) {
+    console.error('下载备份失败:', error);
+    res.status(500).json({ success: false, message: '下载备份失败' });
+  }
+});
+
+// 数据备份 - 恢复备份
+router.post('/backups/restore', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs').promises;
+    const extract = require('extract-zip');
+    const db = require('../config/database');
+    const { filename } = req.body;
+
+    if (!filename || !filename.endsWith('.zip') || filename.includes('..')) {
+      return res.status(400).json({ success: false, message: '无效的备份文件名' });
+    }
+
+    const backupPath = path.join(process.cwd(), 'backups', filename);
+    try {
+      await fs.access(backupPath);
+    } catch {
+      return res.status(404).json({ success: false, message: '备份文件不存在' });
+    }
+
+    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data', 'fileshare.db');
+    const storagePath = process.env.STORAGE_PATH || path.join(process.cwd(), 'storage');
+    const tempDir = path.join(process.cwd(), 'backups', '.restore-temp');
+
+    try {
+      await fs.mkdir(tempDir, { recursive: true });
+      await extract(backupPath, { dir: tempDir });
+
+      await db.close();
+
+      const extractedDb = path.join(tempDir, 'fileshare.db');
+      const extractedStorage = path.join(tempDir, 'storage');
+      const dbDir = path.dirname(dbPath);
+
+      if (require('fs').existsSync(extractedDb)) {
+        await fs.mkdir(dbDir, { recursive: true });
+        await fs.copyFile(extractedDb, dbPath);
+      }
+
+      await db.init();
+
+      let targetStoragePath = storagePath;
+      try {
+        const { getStoragePath } = require('../utils/storage');
+        targetStoragePath = await getStoragePath();
+      } catch (e) {
+        console.warn('读取存储路径失败，使用默认路径:', e.message);
+      }
+
+      if (require('fs').existsSync(extractedStorage)) {
+        await fs.mkdir(targetStoragePath, { recursive: true });
+        const entries = await fs.readdir(targetStoragePath, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(targetStoragePath, entry.name);
+          await fs.rm(fullPath, { recursive: true });
+        }
+        const storageEntries = await fs.readdir(extractedStorage, { withFileTypes: true });
+        for (const entry of storageEntries) {
+          const src = path.join(extractedStorage, entry.name);
+          const dest = path.join(targetStoragePath, entry.name);
+          await fs.cp(src, dest, { recursive: true });
+        }
+      }
+
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+
+      await logOperation(req.user.id, 'restore_backup', 'system', null, {
+        filename,
+        backupPath
+      }, req);
+
+      res.json({
+        success: true,
+        message: '数据恢复成功，请刷新页面'
+      });
+    } catch (error) {
+      await db.init().catch(() => {});
+      throw error;
+    }
+  } catch (error) {
+    console.error('恢复备份失败:', error);
+    res.status(500).json({ success: false, message: '恢复备份失败: ' + error.message });
+  }
+});
+
 module.exports = router;
 

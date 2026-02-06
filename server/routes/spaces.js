@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../config/database');
-const { authenticate, requireAdmin, checkPermission } = require('../middleware/auth');
+const { authenticate, requireAdmin, checkPermission, getBatchFilePermissions } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
 
 const router = express.Router();
@@ -153,7 +153,9 @@ router.get('/:spaceId', authenticate, async (req, res) => {
     }
     
     filesSql += ` ORDER BY f.updated_at DESC LIMIT 50`;
-    const files = await db.query(filesSql, filesParams);
+    let files = await db.query(filesSql, filesParams);
+    const permMap = await getBatchFilePermissions(req.user.id, files);
+    files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
     
     res.json({
       success: true,
@@ -711,7 +713,9 @@ router.get('/:spaceId/file-tree', authenticate, async (req, res) => {
     }
     
     filesSql += ` ORDER BY f.original_name ASC`;
-    const files = await db.query(filesSql, filesParams);
+    let files = await db.query(filesSql, filesParams);
+    const permMap = await getBatchFilePermissions(req.user.id, files);
+    files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
     
     // 构建文件夹映射
     const folderMap = new Map();
@@ -821,7 +825,9 @@ router.get('/:spaceId/folders/:folderId/files', authenticate, async (req, res) =
     }
     
     sql += ` ORDER BY f.updated_at DESC`;
-    const files = await db.query(sql, params);
+    let files = await db.query(sql, params);
+    const permMap = await getBatchFilePermissions(req.user.id, files);
+    files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
     
     res.json({
       success: true,

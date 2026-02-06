@@ -1,7 +1,10 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Button, Space, Modal, Form, Input, Select, message, Table, Tag, Popconfirm, Upload, Tabs, Tree, Empty, Breadcrumb, Typography } from 'antd'
-import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FileOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FileOutlined, FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
+import FileActions from '../components/FileActions'
+import FilePreview from '../components/FilePreview'
+import { formatDateTime } from '../utils/date'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
@@ -28,9 +31,20 @@ export default function SpaceDetail() {
   const [settingsForm] = Form.useForm()
   const [moveFileForm] = Form.useForm()
   const queryClient = useQueryClient()
-  const { token } = useAuthStore()
+  const { token, user } = useAuthStore()
+  const [previewVisible, setPreviewVisible] = useState(false)
+  const [previewFileId, setPreviewFileId] = useState<number | null>(null)
+  const [renameFileModalVisible, setRenameFileModalVisible] = useState(false)
+  const [renameFileForm] = Form.useForm()
+  const [spaceSearchKeyword, setSpaceSearchKeyword] = useState('')
+  const [debouncedSpaceSearch, setDebouncedSpaceSearch] = useState('')
 
   const spaceIdNum = spaceId ? parseInt(spaceId) : null
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSpaceSearch(spaceSearchKeyword), 400)
+    return () => clearTimeout(timer)
+  }, [spaceSearchKeyword])
 
   // 获取空间详情
   const { data: spaceDetail, isLoading: spaceLoading, refetch: refetchSpaceDetail } = useQuery({
@@ -65,6 +79,15 @@ export default function SpaceDetail() {
     queryKey: ['users'],
     queryFn: () => api.get('/users'),
     enabled: false
+  })
+
+  // 空间内文件搜索
+  const { data: spaceSearchData, isLoading: spaceSearchLoading } = useQuery({
+    queryKey: ['space-search', spaceIdNum, debouncedSpaceSearch],
+    queryFn: () => api.get('/search', {
+      params: { keyword: debouncedSpaceSearch, spaceId: spaceIdNum, pageSize: 100 }
+    }),
+    enabled: !!spaceIdNum && !!debouncedSpaceSearch.trim()
   })
 
   // 获取空间成员
@@ -190,6 +213,7 @@ export default function SpaceDetail() {
   // 空间内文件上传配置
   const spaceUploadProps: UploadProps = {
     name: 'file',
+    multiple: true,
     action: '/api/files/upload',
     headers: {
       Authorization: `Bearer ${token}`
@@ -321,12 +345,71 @@ export default function SpaceDetail() {
     })
   }
 
-  // 格式化文件大小
-  const formatFileSize = (size: number) => {
-    if (size < 1024) return `${size} B`
-    if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`
-    if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(2)} MB`
-    return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`
+  const handleDownload = async (fileId: number, fileName: string) => {
+    try {
+      const res = await fetch(`/api/files/download/${fileId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+      if (!res.ok) throw new Error('下载失败')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      a.click()
+      window.URL.revokeObjectURL(url)
+      message.success('下载成功')
+    } catch (e: any) {
+      message.error(e.message || '下载失败')
+    }
+  }
+
+  const handleRenameFile = (file: any) => {
+    setSelectedFile(file)
+    renameFileForm.setFieldsValue({ newName: file.original_name })
+    setRenameFileModalVisible(true)
+  }
+
+  const handleRenameFileConfirm = async (values: any) => {
+    if (!selectedFile) return
+    try {
+      await api.patch(`/files/${selectedFile.id}/rename`, { newName: values.newName })
+      message.success('重命名成功')
+      setRenameFileModalVisible(false)
+      setSelectedFile(null)
+      renameFileForm.resetFields()
+      refetchSpaceDetail()
+      refetchFileTree()
+      if (selectedFolderId) refetchFolderFiles()
+    } catch (e: any) {
+      message.error(e.message || '重命名失败')
+    }
+  }
+
+  const handleDeleteFile = async (fileId: number) => {
+    try {
+      await api.delete(`/files/${fileId}`)
+      message.success('文件已移至回收站')
+      refetchSpaceDetail()
+      refetchFileTree()
+      if (selectedFolderId) refetchFolderFiles()
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+    } catch (e: any) {
+      message.error(e.message || '删除失败')
+    }
+  }
+
+  const handleRemoveFromSpace = async (fileId: number) => {
+    try {
+      await api.patch(`/files/${fileId}/remove-from-space`)
+      message.success('文件已从空间移除')
+      refetchSpaceDetail()
+      refetchFileTree()
+      if (selectedFolderId) refetchFolderFiles()
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+    } catch (e: any) {
+      message.error(e.message || '移除失败')
+    }
   }
 
   // 将文件夹和文件数据转换为树形结构
@@ -334,7 +417,9 @@ export default function SpaceDetail() {
     const treeNodes: DataNode[] = []
     
     // 添加根目录下的文件
-    rootFiles.forEach(file => {
+    rootFiles.forEach((file: any) => {
+      const perms = file?.user_permissions || {}
+      const canWrite = file?.created_by === user?.id || user?.role === 'admin' || perms.write
       treeNodes.push({
         title: (
           <Space style={{ width: '100%', justifyContent: 'space-between' }}>
@@ -348,18 +433,20 @@ export default function SpaceDetail() {
             >
               {file.original_name}
             </a>
-            <Button
-              type="link"
-              size="small"
-              icon={<FolderOpenOutlined />}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleMoveFile(file)
-              }}
-              title="移动到文件夹"
-            >
-              移动
-            </Button>
+            {canWrite && (
+              <Button
+                type="link"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleMoveFile(file)
+                }}
+                title="移动到文件夹"
+              >
+                移动
+              </Button>
+            )}
           </Space>
         ),
         key: `file-${file.id}`,
@@ -375,6 +462,8 @@ export default function SpaceDetail() {
       
       // 添加文件夹中的文件
       folderFiles.forEach((file: any) => {
+        const perms = file?.user_permissions || {}
+        const canWrite = file?.created_by === user?.id || user?.role === 'admin' || perms.write
         children.push({
           title: (
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
@@ -388,18 +477,20 @@ export default function SpaceDetail() {
               >
                 {file.original_name}
               </a>
-              <Button
-                type="link"
-                size="small"
-                icon={<FolderOpenOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleMoveFile(file)
-                }}
-                title="移动到文件夹"
-              >
-                移动
-              </Button>
+              {canWrite && (
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleMoveFile(file)
+                  }}
+                  title="移动到文件夹"
+                >
+                  移动
+                </Button>
+              )}
             </Space>
           ),
           key: `file-${file.id}`,
@@ -615,6 +706,89 @@ export default function SpaceDetail() {
           </Space>
         </Space>
 
+        <div style={{ marginBottom: 16 }}>
+          <Input
+            placeholder="搜索本空间内的文件..."
+            prefix={<SearchOutlined />}
+            allowClear
+            value={spaceSearchKeyword}
+            onChange={(e) => setSpaceSearchKeyword(e.target.value)}
+            style={{ maxWidth: 400 }}
+          />
+        </div>
+
+        {debouncedSpaceSearch.trim() ? (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, color: '#666' }}>
+              搜索「{debouncedSpaceSearch}」共 {spaceSearchData?.data?.total ?? 0} 个结果
+            </div>
+            <Table
+              columns={[
+                {
+                  title: '文件名',
+                  dataIndex: 'original_name',
+                  key: 'original_name',
+                  render: (text: string, record: any) => (
+                    <a
+                      href={`/files/${record.id}`}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        navigate(`/files/${record.id}`)
+                      }}
+                      style={{ color: '#1890ff' }}
+                    >
+                      {text}
+                    </a>
+                  )
+                },
+                {
+                  title: '大小',
+                  dataIndex: 'file_size',
+                  key: 'file_size',
+                  render: (size: number) => {
+                    if (!size) return '-'
+                    if (size < 1024) return `${size} B`
+                    if (size < 1024 * 1024) return `${(size / 1024).toFixed(2)} KB`
+                    if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(2)} MB`
+                    return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`
+                  }
+                },
+                { title: '上传人', dataIndex: 'creator_name', key: 'creator_name' },
+                {
+                  title: '上传时间',
+                  dataIndex: 'created_at',
+                  key: 'created_at',
+                  render: (time: string) => formatDateTime(time)
+                },
+                {
+                  title: '操作',
+                  key: 'action',
+                  render: (_: any, record: any) => (
+                    <FileActions
+                      record={record}
+                      onPreview={(r) => {
+                        setSelectedFile(r)
+                        setPreviewFileId(r.id)
+                        setPreviewVisible(true)
+                      }}
+                      onDownload={handleDownload}
+                      onRename={handleRenameFile}
+                      onMove={handleMoveFile}
+                      onRemoveFromSpace={handleRemoveFromSpace}
+                      onDelete={handleDeleteFile}
+                    />
+                  )
+                }
+              ]}
+              dataSource={spaceSearchData?.data?.files || []}
+              rowKey="id"
+              loading={spaceSearchLoading}
+              pagination={false}
+              locale={{ emptyText: '未找到匹配的文件' }}
+            />
+          </div>
+        ) : null}
+
         <Tabs
           defaultActiveKey="tree"
           items={[
@@ -652,7 +826,7 @@ export default function SpaceDetail() {
                           typeof key === 'string' && key.startsWith('folder-')
                         )
                         if (folderKey) {
-                          const folderId = parseInt(folderKey.replace('folder-', ''))
+                          const folderId = parseInt(String(folderKey).replace('folder-', ''))
                           handleSelectFolder(folderId)
                         } else {
                           handleSelectFolder(null)
@@ -718,7 +892,26 @@ export default function SpaceDetail() {
                         title: '上传时间',
                         dataIndex: 'created_at',
                         key: 'created_at',
-                        render: (time: string) => new Date(time).toLocaleString()
+                        render: (time: string) => formatDateTime(time)
+                      },
+                      {
+                        title: '操作',
+                        key: 'action',
+                        render: (_: any, record: any) => (
+                          <FileActions
+                            record={record}
+                            onPreview={(r) => {
+                              setSelectedFile(r)
+                              setPreviewFileId(r.id)
+                              setPreviewVisible(true)
+                            }}
+                            onDownload={handleDownload}
+                            onRename={handleRenameFile}
+                            onMove={handleMoveFile}
+                            onRemoveFromSpace={handleRemoveFromSpace}
+                            onDelete={handleDeleteFile}
+                          />
+                        )
                       }
                     ]}
                     dataSource={space.files || []}
@@ -799,7 +992,26 @@ export default function SpaceDetail() {
                             title: '上传时间',
                             dataIndex: 'created_at',
                             key: 'created_at',
-                            render: (time: string) => new Date(time).toLocaleString()
+                            render: (time: string) => formatDateTime(time)
+                          },
+                          {
+                            title: '操作',
+                            key: 'action',
+                            render: (_: any, record: any) => (
+                              <FileActions
+                                record={record}
+                                onPreview={(r) => {
+                                  setSelectedFile(r)
+                                  setPreviewFileId(r.id)
+                                  setPreviewVisible(true)
+                                }}
+                                onDownload={handleDownload}
+                                onRename={handleRenameFile}
+                                onMove={handleMoveFile}
+                                onRemoveFromSpace={handleRemoveFromSpace}
+                                onDelete={handleDeleteFile}
+                              />
+                            )
                           }
                         ]}
                         dataSource={folderFilesData?.data || []}
@@ -1034,7 +1246,7 @@ export default function SpaceDetail() {
               <div><strong>空间类型：</strong>{spaceTypeMap[space.type] || space.type}</div>
               <div style={{ marginTop: 8 }}>
                 <strong>创建时间：</strong>
-                {new Date(space.created_at).toLocaleString()}
+                {formatDateTime(space.created_at)}
               </div>
               {space.owner_name && (
                 <div style={{ marginTop: 8 }}>
@@ -1082,6 +1294,41 @@ export default function SpaceDetail() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 重命名文件弹窗 */}
+      <Modal
+        title="重命名文件"
+        open={renameFileModalVisible}
+        onCancel={() => {
+          setRenameFileModalVisible(false)
+          setSelectedFile(null)
+          renameFileForm.resetFields()
+        }}
+        onOk={() => renameFileForm.submit()}
+        width={400}
+      >
+        <Form form={renameFileForm} layout="vertical" onFinish={handleRenameFileConfirm}>
+          <Form.Item
+            name="newName"
+            label="新文件名"
+            rules={[{ required: true, message: '请输入新文件名' }]}
+          >
+            <Input placeholder="请输入新文件名" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 文件预览 */}
+      <FilePreview
+        fileId={previewFileId}
+        fileName={selectedFile?.original_name}
+        mimeType={selectedFile?.mime_type}
+        visible={previewVisible}
+        onClose={() => {
+          setPreviewVisible(false)
+          setPreviewFileId(null)
+        }}
+      />
     </div>
   )
 }

@@ -120,10 +120,109 @@ async function checkPermission(userId, resourceType, resourceId, permissionType)
   }
 }
 
+// 获取用户对资源的所有权限（用于文件列表展示操作按钮）
+async function getUserPermissions(userId, resourceType, resourceId) {
+  const types = ['read', 'write', 'delete', 'comment', 'download'];
+  const result = {};
+  for (const t of types) {
+    result[t] = await checkPermission(userId, resourceType, resourceId, t);
+  }
+  return result;
+}
+
+// 批量获取用户对多个文件的权限（优化性能）
+async function getBatchFilePermissions(userId, files) {
+  const user = await db.get('SELECT role FROM users WHERE id = ?', [userId]);
+  const isAdmin = user?.role === 'admin';
+  const fileIds = files.map(f => f.id).filter(Boolean);
+  if (fileIds.length === 0) return {};
+
+  const permMap = {};
+  for (const f of files) {
+    permMap[f.id] = { read: false, write: false, delete: false, comment: false, download: false };
+  }
+
+  if (isAdmin) {
+    for (const id of fileIds) {
+      permMap[id] = { read: true, write: true, delete: true, comment: true, download: true };
+    }
+    return permMap;
+  }
+
+  // 创建者拥有全部权限
+  for (const f of files) {
+    if (f.created_by === userId) {
+      permMap[f.id] = { read: true, write: true, delete: true, comment: true, download: true };
+    }
+  }
+
+  // 空间所有者对空间内文件有全部权限
+  const spaceIds = [...new Set(files.filter(f => f.space_id).map(f => f.space_id))];
+  for (const sid of spaceIds) {
+    const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [sid]);
+    if (space?.owner_id === userId) {
+      for (const f of files) {
+        if (f.space_id === sid && !permMap[f.id].read) {
+          permMap[f.id] = { read: true, write: true, delete: true, comment: true, download: true };
+        }
+      }
+    }
+  }
+
+  // 批量查询直接权限和用户组权限
+  const placeholders = fileIds.map(() => '?').join(',');
+  const directPerms = await db.query(
+    `SELECT resource_id, permission_type FROM permissions 
+     WHERE resource_type = 'file' AND resource_id IN (${placeholders}) 
+     AND user_id = ?`,
+    [...fileIds, userId]
+  );
+  const groupPerms = await db.query(
+    `SELECT p.resource_id, p.permission_type FROM permissions p
+     INNER JOIN user_group_members ugm ON p.group_id = ugm.group_id
+     WHERE p.resource_type = 'file' AND p.resource_id IN (${placeholders})
+     AND ugm.user_id = ?`,
+    [...fileIds, userId]
+  );
+
+  for (const row of [...directPerms, ...groupPerms]) {
+    if (permMap[row.resource_id] && !permMap[row.resource_id][row.permission_type]) {
+      permMap[row.resource_id][row.permission_type] = true;
+    }
+  }
+
+  // 空间级权限：有空间权限则对空间内文件生效
+  let spacePerms = [];
+  if (spaceIds.length > 0) {
+    spacePerms = await db.query(
+      `SELECT p.resource_id, p.permission_type FROM permissions p
+       WHERE p.resource_type = 'space' AND p.resource_id IN (${spaceIds.map(() => '?').join(',')})
+       AND (p.user_id = ? OR p.group_id IN (SELECT group_id FROM user_group_members WHERE user_id = ?))`,
+      [...spaceIds, userId, userId]
+    );
+  }
+  const spacePermMap = {};
+  for (const row of spacePerms) {
+    if (!spacePermMap[row.resource_id]) spacePermMap[row.resource_id] = new Set();
+    spacePermMap[row.resource_id].add(row.permission_type);
+  }
+  for (const f of files) {
+    if (f.space_id && spacePermMap[f.space_id] && !permMap[f.id].read) {
+      for (const t of ['read', 'write', 'delete', 'comment', 'download']) {
+        if (spacePermMap[f.space_id].has(t)) permMap[f.id][t] = true;
+      }
+    }
+  }
+
+  return permMap;
+}
+
 module.exports = {
   authenticate,
   requireRole,
   requireAdmin,
-  checkPermission
+  checkPermission,
+  getUserPermissions,
+  getBatchFilePermissions
 };
 

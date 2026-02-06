@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Upload, Space, Input, message, Modal, Form, Select, Popconfirm } from 'antd'
-import { UploadOutlined, SearchOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons'
+import { Table, Button, Upload, Space, Input, message, Modal, Form, Select } from 'antd'
+import { UploadOutlined, SearchOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import FilePreview from '../components/FilePreview'
+import FileActions from '../components/FileActions'
+import { formatDateTime } from '../utils/date'
 import type { UploadProps } from 'antd'
 
 const { Option } = Select
@@ -226,6 +228,7 @@ export default function Files() {
 
   const uploadProps: UploadProps = {
     name: 'file',
+    multiple: true,
     action: '/api/files/upload',
     headers: {
       Authorization: `Bearer ${token}`
@@ -301,80 +304,25 @@ export default function Files() {
       title: '上传时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (time: string) => new Date(time).toLocaleString()
+      render: (time: string) => formatDateTime(time)
     },
     {
       title: '操作',
       key: 'action',
       render: (_: any, record: any) => (
-        <Space>
-          <Button 
-            type="link" 
-            size="small"
-            icon={<FileTextOutlined />}
-            onClick={() => navigate(`/files/${record.id}`)}
-          >
-            详情
-          </Button>
-          <Button 
-            type="link" 
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => {
-              setSelectedFile(record)
-              setPreviewFileId(record.id)
-              setPreviewVisible(true)
-            }}
-          >
-            预览
-          </Button>
-          <Button 
-            type="link" 
-            size="small"
-            onClick={() => handleDownload(record.id, record.original_name)}
-          >
-            下载
-          </Button>
-          <Button 
-            type="link" 
-            size="small"
-            onClick={() => handleRename(record)}
-          >
-            重命名
-          </Button>
-          <Button 
-            type="link" 
-            size="small"
-            onClick={() => handleMoveFile(record)}
-          >
-            移动
-          </Button>
-          {record.space_id && (
-            <Button 
-              type="link" 
-              size="small"
-              onClick={() => handleRemoveFromSpace(record.id)}
-            >
-              从空间移除
-            </Button>
-          )}
-          <Popconfirm
-            title="确定要删除此文件吗？"
-            description="文件将被移至回收站，可在回收站中恢复或永久删除"
-            onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
-            okType="danger"
-          >
-            <Button 
-              type="link" 
-              size="small" 
-              danger
-            >
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
+        <FileActions
+          record={record}
+          onPreview={(r) => {
+            setSelectedFile(r)
+            setPreviewFileId(r.id)
+            setPreviewVisible(true)
+          }}
+          onDownload={handleDownload}
+          onRename={handleRename}
+          onMove={handleMoveFile}
+          onRemoveFromSpace={handleRemoveFromSpace}
+          onDelete={handleDelete}
+        />
       )
     }
   ]
@@ -433,7 +381,7 @@ export default function Files() {
             <Select
               placeholder="选择空间（留空表示移除空间关联）"
               allowClear
-              onChange={(value) => {
+              onChange={() => {
                 // 当空间改变时，清空文件夹选择
                 moveForm.setFieldValue('folderId', null)
               }}

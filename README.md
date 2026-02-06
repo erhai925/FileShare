@@ -112,11 +112,13 @@ PORT=3000
 
 3. **使用PM2运行**
 ```bash
+npm run client:build
 npm install -g pm2
-pm2 start server/index.js --name fileshare
+pm2 start ecosystem.config.js
 pm2 save
 pm2 startup
 ```
+生产环境访问 `http://IP:端口` 即可使用。
 
 ### Windows Server部署
 
@@ -166,6 +168,7 @@ pm2 startup
 - 存储监控
 - 日志查看与导出
 - 系统配置
+- 数据备份与恢复
 
 ## 安全特性
 

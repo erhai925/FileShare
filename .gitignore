@@ -15,8 +15,9 @@ data/
 uploads/
 storage/
 
-# 日志
-logs/
+# 日志（根目录 logs/ 存放前后端输出日志）
+logs/*
+!logs/.gitkeep
 *.log
 
 # 构建输出

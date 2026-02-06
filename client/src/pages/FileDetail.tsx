@@ -24,6 +24,7 @@ import {
   DeleteOutlined
 } from '@ant-design/icons'
 import api from '../services/api'
+import { formatDateTime } from '../utils/date'
 import { useAuthStore } from '../stores/authStore'
 import FilePreview from '../components/FilePreview'
 
@@ -216,7 +217,7 @@ export default function FileDetail() {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (time: string) => new Date(time).toLocaleString()
+      render: (time: string) => formatDateTime(time)
     },
     {
       title: '操作',
@@ -280,10 +281,10 @@ export default function FileDetail() {
             {file.creator_name || file.creator_real_name || '未知'}
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">
-            {new Date(file.created_at).toLocaleString()}
+            {formatDateTime(file.created_at)}
           </Descriptions.Item>
           <Descriptions.Item label="最后更新">
-            {new Date(file.updated_at).toLocaleString()}
+            {formatDateTime(file.updated_at)}
           </Descriptions.Item>
           <Descriptions.Item label="当前版本">
             v{file.version}
@@ -354,7 +355,7 @@ export default function FileDetail() {
                         <Space>
                           <Text strong>{comment.username || comment.real_name || '未知用户'}</Text>
                           <Text type="secondary">
-                            {new Date(comment.created_at).toLocaleString()}
+                            {formatDateTime(comment.created_at)}
                           </Text>
                         </Space>
                         <div style={{ marginTop: 8 }}>

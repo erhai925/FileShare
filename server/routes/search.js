@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, getBatchFilePermissions } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -84,7 +84,9 @@ router.get('/', authenticate, async (req, res) => {
       LIMIT ? OFFSET ?`;
     params.push(keyword ? `%${keyword}%` : '', parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize));
     
-    const files = await db.query(sql, params);
+    let files = await db.query(sql, params);
+    const permMap = await getBatchFilePermissions(req.user.id, files);
+    files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
     
     // 获取总数
     let countSql = `SELECT COUNT(*) as total FROM files f WHERE f.deleted_at IS NULL`;

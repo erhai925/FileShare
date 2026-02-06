@@ -62,10 +62,13 @@ cat upgrades/version.json
 #### 备份数据库
 
 ```bash
-# 使用系统备份功能
+# 方式一：使用管理后台备份（推荐）
+# 进入 系统管理 > 数据备份 > 立即备份
+
+# 方式二：使用命令行备份
 npm run backup
 
-# 或手动备份
+# 方式三：手动备份
 cp data/fileshare.db data/fileshare.db.backup.$(date +%Y%m%d_%H%M%S)
 ```
 
