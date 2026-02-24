@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import { formatDateTime } from '../utils/date'
+import './Dashboard.css'
 
 const { Title } = Typography
 
@@ -143,20 +144,20 @@ export default function Dashboard() {
   const topUploaders = topUploadersData?.data?.list || []
 
   return (
-    <div>
-      <Title level={2}>
+    <div className="dashboard-page">
+      <Title level={2} className="dashboard-title">
         工作台
         {user && (
-          <span style={{ fontSize: 16, fontWeight: 'normal', color: '#666', marginLeft: 12 }}>
+          <span style={{ fontSize: 16, fontWeight: 'normal', color: 'var(--text-secondary)', marginLeft: 12 }}>
             欢迎，{user.realName || user.username}
           </span>
         )}
-        <span style={{ fontSize: 14, fontWeight: 'normal', color: '#999', marginLeft: 12 }}>
+        <span style={{ fontSize: 14, fontWeight: 'normal', color: 'var(--text-muted)', marginLeft: 12 }}>
           <InfoCircleOutlined /> 系统版本 v{version}
         </span>
       </Title>
       
-      <Row gutter={16} style={{ marginBottom: 24 }}>
+      <Row gutter={16} className="dashboard-stats" style={{ marginBottom: 24 }}>
         <Col span={6}>
           <Card>
             <Statistic
@@ -199,7 +200,7 @@ export default function Dashboard() {
       </Row>
 
       {topUploaders.length > 0 && (
-        <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Row gutter={16} className="dashboard-section" style={{ marginBottom: 24 }}>
           <Col span={24}>
             <Card
               title={
@@ -229,7 +230,7 @@ export default function Dashboard() {
         </Row>
       )}
 
-      <Row gutter={16} style={{ marginBottom: 24 }}>
+      <Row gutter={16} className="dashboard-section" style={{ marginBottom: 24 }}>
         <Col span={24}>
           <Card 
             title={
@@ -238,7 +239,7 @@ export default function Dashboard() {
                 桌面客户端
               </Space>
             }
-            extra={<Tag color="blue">推荐</Tag>}
+            extra={<Tag color="cyan">推荐</Tag>}
           >
             <div style={{ marginBottom: 16 }}>
               <Typography.Paragraph>
@@ -263,7 +264,7 @@ export default function Dashboard() {
                 下载 Windows 版本
               </Button>
             </Space>
-            <div style={{ marginTop: 16, padding: 12, backgroundColor: '#f0f0f0', borderRadius: 4 }}>
+            <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--color-accent-light)', borderRadius: 8 }}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 💡 提示：如果下载链接不可用，请先运行 <code>npm run electron:build</code> 构建安装程序。
                 构建完成后，安装程序将位于 <code>dist-electron</code> 目录中，请将其复制到 <code>downloads</code> 目录。
@@ -273,7 +274,7 @@ export default function Dashboard() {
         </Col>
       </Row>
 
-      <Card title="最近文件">
+      <Card title="最近文件" className="dashboard-section">
         <List
           dataSource={recentFilesList?.data?.files || []}
           renderItem={(item: any) => {
@@ -285,7 +286,7 @@ export default function Dashboard() {
                   e.preventDefault()
                   navigate(`/spaces/${item.space_id}`)
                 }}
-                style={{ color: '#1890ff', marginRight: 8 }}
+                style={{ color: 'var(--color-accent)', marginRight: 8 }}
               >
                 {item.space_name || '未命名空间'}
               </a>
@@ -299,7 +300,7 @@ export default function Dashboard() {
                   e.preventDefault()
                   navigate(`/spaces/${item.space_id}?folderId=${item.folder_id}`)
                 }}
-                style={{ color: '#1890ff' }}
+                style={{ color: 'var(--color-accent)' }}
               >
                 {item.folder_name}
               </a>
@@ -320,7 +321,7 @@ export default function Dashboard() {
                           e.preventDefault()
                           navigate(`/files/${item.id}`)
                         }}
-                        style={{ color: '#1890ff' }}
+                        style={{ color: 'var(--color-accent)' }}
                       >
                         {item.original_name}
                       </a>

@@ -149,12 +149,10 @@ router.get('/my-shares', authenticate, async (req, res) => {
     const shares = await db.query(
       `SELECT s.*, 
        CASE 
-         WHEN s.resource_type = 'file' THEN f.original_name
-         WHEN s.resource_type = 'folder' THEN fo.name
+         WHEN s.resource_type = 'file' THEN (SELECT original_name FROM files WHERE id = s.resource_id LIMIT 1)
+         WHEN s.resource_type = 'folder' THEN (SELECT name FROM folders WHERE id = s.resource_id LIMIT 1)
        END as resource_name
        FROM external_shares s
-       LEFT JOIN files f ON s.resource_type = 'file' AND s.resource_id = f.id
-       LEFT JOIN folders fo ON s.resource_type = 'folder' AND s.resource_id = fo.id
        WHERE s.created_by = ?
        ORDER BY s.created_at DESC`,
       [req.user.id]

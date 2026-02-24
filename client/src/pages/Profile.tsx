@@ -17,8 +17,8 @@ export default function Profile() {
   }
 
   return (
-    <div>
-      <Card title="个人设置" style={{ maxWidth: 600 }}>
+    <div className="page-content">
+      <Card title="个人设置" style={{ maxWidth: 600 }} className="profile-card">
         <div style={{ marginBottom: 24 }}>
           <p><strong>用户名:</strong> {user?.username}</p>
           <p><strong>邮箱:</strong> {user?.email}</p>

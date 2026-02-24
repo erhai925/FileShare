@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * 升级脚本：v1.0.3 -> v1.0.4
+ * 升级脚本：v1.0.6 -> v1.0.7
  *
  * 更新内容：
- * 1. 大文件上传：请求体限制 500mb，Nginx client_max_body_size 配置说明
- * 2. PM2 前后端同时启动（ecosystem.config.js）
- * 3. 空间管理置于文件管理之上（侧边栏顺序）
- * 4. 工作台最近文件显示所在空间/文件夹，可点击进入
- * 5. 空间详情页支持 ?folderId= 直接定位文件夹
- * 6. 工作台显示当前登录者真实姓名
- * 7. 用户管理增加登录次数统计（依赖 operation_logs 表）
+ * 1. UI 设计系统：全局设计令牌（字体 Syne/Plus Jakarta Sans、青绿强调色、圆角与阴影）
+ * 2. 登录页：深色编辑风背景、网格与渐变、卡片入场动效（去除通用紫色渐变）
+ * 3. 布局与工作台：顶栏/侧栏统一风格、统计卡片交错动效、Tabs 与链接强调色
+ * 4. 文件管理页：表格多选、批量移动、批量删除（移至回收站）
+ * 5. 空间详情页：搜索结果/文件列表/文件夹内文件三处表格支持多选与批量移动、批量删除、从空间移除
+ * 6. 回收站：已有批量恢复与批量永久删除，保持不变
  *
- * 数据库迁移：执行完整 schema 同步，确保所有表、索引与当前版本一致
+ * 无数据库结构变更。文件覆盖：client/src 与 server；升级后需重新构建前端并重启服务。
  */
 
 const fs = require('fs').promises;
@@ -20,9 +19,12 @@ const path = require('path');
 const { execSync } = require('child_process');
 const readline = require('readline');
 
+process.env.TZ = process.env.TZ || 'Asia/Shanghai';
+
 const getVersionFilePath = (projectRoot) => path.join(projectRoot || path.resolve(__dirname, '..'), 'upgrades', 'version.json');
-const TARGET_VERSION = '1.0.4';
-const FROM_VERSION = '1.0.3';
+const SOURCE_ROOT = path.resolve(__dirname, '..');
+const TARGET_VERSION = '1.0.7';
+const FROM_VERSION = '1.0.6';
 
 const colors = {
   reset: '\x1b[0m',
@@ -85,7 +87,7 @@ async function updateVersion(projectRoot, newVersion) {
   versionInfo.upgradeHistory.push({
     version: newVersion,
     date: new Date().toISOString().split('T')[0],
-    description: `从 ${oldVersion} 升级到 ${newVersion} - 大文件上传、PM2前后端、工作台优化、登录次数统计等`
+    description: `从 ${oldVersion} 升级到 ${newVersion} - UI 设计系统优化、多页批量操作（批量移动/删除/从空间移除）`
   });
 
   await fs.writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf8');
@@ -94,9 +96,13 @@ async function updateVersion(projectRoot, newVersion) {
 
 async function checkVersion(projectRoot) {
   const currentVersion = await getCurrentVersion(projectRoot);
+  if (currentVersion === TARGET_VERSION) {
+    logWarning(`当前已是 v${TARGET_VERSION}，将执行同步（覆盖文件、构建）`);
+    return;
+  }
   if (currentVersion !== FROM_VERSION) {
     logError(`版本不匹配！当前版本: ${currentVersion}, 期望版本: ${FROM_VERSION}`);
-    logWarning('请确保您正在从正确的版本升级');
+    logWarning('请确保您正在从正确的版本升级，或先运行对应的升级脚本');
     process.exit(1);
   }
   logSuccess(`当前版本检查通过: ${currentVersion}`);
@@ -109,11 +115,12 @@ async function getDeploymentPaths() {
   const defaultDbPath = path.join(projectRoot, 'data', 'fileshare.db');
   const defaultBackupPath = path.join(projectRoot, 'backups');
 
-  logInfo(`当前脚本所在项目根目录: ${projectRoot}`);
+  logInfo(`升级包/新代码目录: ${SOURCE_ROOT}`);
+  logInfo(`默认部署目录: ${projectRoot}`);
   logInfo('若部署路径与上述相同，直接回车即可');
   log('');
 
-  const projectRootInput = await question('项目部署根目录（代码所在路径）', projectRoot);
+  const projectRootInput = await question('项目部署根目录（将覆盖其 client/src 和 server）', projectRoot);
   const resolvedProjectRoot = path.resolve(projectRootInput);
 
   const dbPathInput = await question('数据库文件路径 (DB_PATH)', path.join(resolvedProjectRoot, 'data', 'fileshare.db'));
@@ -145,22 +152,41 @@ async function backupDatabase(paths) {
   logSuccess(`数据库已备份到: ${backupFilePath}`);
 }
 
-/**
- * 执行完整数据库 schema 迁移（新建表、索引等，与 database.js 保持一致）
- */
-async function runDatabaseMigrations(paths) {
-  logStep(2, '数据库迁移：同步 schema（新建表、索引等）');
+async function overwriteClientAndServer(paths) {
+  logStep(2, '覆盖 client/src 和 server 目录');
+
+  const targetRoot = paths.projectRoot;
+  const srcClientSrc = path.join(SOURCE_ROOT, 'client', 'src');
+  const srcServer = path.join(SOURCE_ROOT, 'server');
+  const targetClientSrc = path.join(targetRoot, 'client', 'src');
+  const targetServer = path.join(targetRoot, 'server');
 
   try {
-    await fs.access(paths.dbPath);
-  } catch {
-    logWarning('数据库文件不存在，跳过迁移');
-    return;
+    await fs.access(srcClientSrc);
+    await fs.access(srcServer);
+  } catch (err) {
+    throw new Error(`升级包目录不完整，缺少 client/src 或 server，请确保从完整升级包运行。路径: ${SOURCE_ROOT}`);
   }
 
-  const { runMigrations } = require(path.join(paths.projectRoot, 'server', 'scripts', 'migrate-schema.js'));
-  await runMigrations(paths.dbPath);
-  logSuccess('数据库 schema 迁移完成');
+  const tempDir = path.join(targetRoot, '.upgrade-temp-' + Date.now());
+
+  try {
+    await fs.mkdir(tempDir, { recursive: true });
+
+    await fs.cp(srcClientSrc, path.join(tempDir, 'client_src'), { recursive: true, force: true });
+    await fs.cp(srcServer, path.join(tempDir, 'server'), { recursive: true, force: true });
+
+    await fs.rm(targetClientSrc, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(targetRoot, 'client'), { recursive: true });
+    await fs.rename(path.join(tempDir, 'client_src'), targetClientSrc);
+
+    await fs.rm(targetServer, { recursive: true, force: true }).catch(() => {});
+    await fs.rename(path.join(tempDir, 'server'), targetServer);
+
+    logSuccess('client/src 和 server 已完全覆盖');
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function installDependencies(projectRoot) {
@@ -181,6 +207,11 @@ async function buildFrontend(projectRoot) {
 
 async function doUpdateVersion(projectRoot) {
   logStep(6, '更新版本号');
+  const currentVersion = await getCurrentVersion(projectRoot);
+  if (currentVersion === TARGET_VERSION) {
+    logSuccess(`版本已是 v${TARGET_VERSION}，跳过更新`);
+    return;
+  }
   await updateVersion(projectRoot, TARGET_VERSION);
 }
 
@@ -188,7 +219,7 @@ async function main() {
   log('\n========================================', 'blue');
   log('  FileShare 系统升级脚本', 'blue');
   log(`  从 ${FROM_VERSION} 升级到 ${TARGET_VERSION}`, 'blue');
-  log('  无数据库结构变更', 'blue');
+  log('  UI 优化与批量操作（无数据库迁移）', 'blue');
   log('========================================\n', 'blue');
 
   try {
@@ -209,7 +240,7 @@ async function main() {
     }
 
     await backupDatabase(paths);
-    await runDatabaseMigrations(paths);
+    await overwriteClientAndServer(paths);
     await installDependencies(paths.projectRoot);
     await buildFrontend(paths.projectRoot);
     await doUpdateVersion(paths.projectRoot);
@@ -219,17 +250,15 @@ async function main() {
     log('========================================\n', 'green');
 
     log('本次更新内容:', 'yellow');
-    log('1. 大文件上传支持（500mb 请求体限制）');
-    log('2. PM2 前后端同时启动');
-    log('3. 空间管理置于文件管理之上');
-    log('4. 工作台最近文件显示空间/文件夹并可点击');
-    log('5. 工作台显示当前登录者真实姓名');
-    log('6. 用户管理增加登录次数统计');
+    log('1. UI 设计系统：全局字体与青绿强调色、登录/布局/工作台样式与动效');
+    log('2. 文件管理页：表格多选、批量移动、批量删除');
+    log('3. 空间详情页：三处文件表支持多选与批量移动、批量删除、从空间移除');
+    log('4. 无数据库结构变更');
     log('');
 
     log('下一步操作:', 'yellow');
-    log('1. 重启服务: pm2 restart all 或 pm2 start ecosystem.config.js');
-    log('2. 若使用 Nginx: 确保配置 client_max_body_size 500m;');
+    log('1. 若使用 Git 部署：请先执行 git pull 拉取 client/index.html 等根目录变更');
+    log('2. 重启服务: pm2 restart all 或 npm run dev');
     log('3. 若页面仍为旧版: 浏览器强制刷新 Ctrl+Shift+R (Win) 或 Cmd+Shift+R (Mac)');
     log('');
   } catch (error) {

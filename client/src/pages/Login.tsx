@@ -29,7 +29,7 @@ export default function Login() {
 
   return (
     <div className="login-container">
-      <Card className="login-card" title="FileShare 文件共享系统">
+      <Card className="login-card" title="FileShare 文件共享系统" bordered={false}>
         <Form
           name="login"
           onFinish={onFinish}

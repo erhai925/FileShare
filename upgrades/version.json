@@ -1,10 +1,11 @@
 {
-  "currentVersion": "1.0.6",
+  "currentVersion": "1.0.7",
   "upgradeHistory": [
     {"version": "1.0.0", "date": "2024-01-01", "description": "初始版本"},
     {"version": "1.0.1", "date": "2024-12-XX", "description": "从 1.0.0 升级到 1.0.1 - 完善Word文件预览功能，添加localhost环境检测和警告弹框提示"},
     {"version": "1.0.2", "date": "2024-12-XX", "description": "从 1.0.1 升级到 1.0.2 - 用户管理功能完善、空间文件树展示、文件移动功能完善"},
     {"version": "1.0.5", "date": "2025-02-XX", "description": "从 1.0.4 升级到 1.0.5 - 限流优化、大文件上传超时、429友好提示、工作台版本与排行榜、文件覆盖升级"},
-    {"version": "1.0.6", "date": "2025-02-XX", "description": "从 1.0.5 升级到 1.0.6 - 版本号更新"}
+    {"version": "1.0.6", "date": "2025-02-XX", "description": "从 1.0.5 升级到 1.0.6 - 版本号更新"},
+    {"version": "1.0.7", "date": "2025-02-07", "description": "从 1.0.6 升级到 1.0.7 - UI 设计系统优化、多页批量操作（批量移动/删除/从空间移除）"}
   ]
 }

@@ -1,3 +1,36 @@
+/* ========== FileShare 设计令牌（Design Tokens） ========== */
+:root {
+  /* 字体 */
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* 主色：深色导航 */
+  --bg-header: #0f172a;
+  --bg-sider: #1e293b;
+  --bg-sider-hover: #334155;
+  --bg-sider-selected: #0f172a;
+  --border-sider: rgba(255, 255, 255, 0.06);
+
+  /* 强调色：青绿（替代通用紫） */
+  --color-accent: #0d9488;
+  --color-accent-hover: #0f766e;
+  --color-accent-light: rgba(13, 148, 136, 0.12);
+
+  /* 内容区 */
+  --bg-content: #f8fafc;
+  --bg-card: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+
+  /* 阴影与层次 */
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-card-hover: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -5,9 +38,10 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-content);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -16,7 +50,84 @@ body {
   min-height: 100vh;
 }
 
+/* 标题使用展示字体 */
+h1, h2, h3, h4, h5, h6,
+.ant-typography h1, .ant-typography h2, .ant-typography h3,
+.ant-typography h4, .ant-typography h5, .ant-typography h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
 
+/* 链接与主按钮强调色统一 */
+.ant-btn-primary {
+  background: var(--color-accent) !important;
+  border-color: var(--color-accent) !important;
+}
+.ant-btn-primary:hover {
+  background: var(--color-accent-hover) !important;
+  border-color: var(--color-accent-hover) !important;
+}
+.ant-link {
+  color: var(--color-accent);
+}
+.ant-link:hover {
+  color: var(--color-accent-hover);
+}
 
+/* ========== 通用内容页 ========== */
+.page-content {
+  animation: pageReveal 0.35s ease-out;
+}
+@keyframes pageReveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.page-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+  color: var(--text-primary);
+}
+.page-content .ant-card {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s ease;
+}
+.page-content .ant-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+.page-content .ant-table-wrapper .ant-table {
+  border-radius: var(--radius-sm);
+}
+.page-content .ant-btn-link {
+  color: var(--color-accent);
+}
+.page-content .ant-btn-link:hover {
+  color: var(--color-accent-hover);
+}
+.page-content a {
+  color: var(--color-accent);
+}
+.page-content a:hover {
+  color: var(--color-accent-hover);
+}
 
+/* 空间管理：网格卡片 */
+.page-content .ant-list .ant-card {
+  overflow: hidden;
+}
+.page-content .ant-list .ant-card .ant-card-cover {
+  background: linear-gradient(180deg, var(--color-accent-light) 0%, transparent 100%);
+  padding: 24px;
+}
 
+/* 管理后台：Tabs 选中态与强调色一致 */
+.page-content .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--color-accent);
+}
+.page-content .ant-tabs-ink-bar {
+  background: var(--color-accent);
+}
+.page-content .ant-tabs-tab:hover {
+  color: var(--color-accent-hover);
+}

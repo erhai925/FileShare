@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Upload, Space, Input, message, Modal, Form, Select } from 'antd'
-import { UploadOutlined, SearchOutlined } from '@ant-design/icons'
+import { Table, Button, Upload, Space, Input, message, Modal, Form, Select, Popconfirm } from 'antd'
+import { UploadOutlined, SearchOutlined, FolderOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
@@ -43,8 +43,7 @@ export default function Files() {
   const [previewFileId, setPreviewFileId] = useState<number | null>(null)
   const [renameModalVisible, setRenameModalVisible] = useState(false)
   const [renameForm] = Form.useForm()
-  // const [advancedSearchVisible, setAdvancedSearchVisible] = useState(false) // 暂时未使用
-  // const [searchForm] = Form.useForm() // 暂时未使用
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { token } = useAuthStore()
@@ -166,7 +165,7 @@ export default function Files() {
     }
   }
 
-  // 移动文件到空间
+  // 移动文件到空间（单个）
   const handleMoveFile = (file: any) => {
     setSelectedFile(file)
     setMoveModalVisible(true)
@@ -174,23 +173,71 @@ export default function Files() {
       spaceId: file.space_id || undefined,
       folderId: file.folder_id || undefined
     })
-    // 如果文件已有空间，清空文件夹选择，等待重新加载
-    if (file.space_id) {
-      // 文件夹会在空间选择后自动加载
-    }
+  }
+
+  // 批量移动：打开弹窗时用当前选中行
+  const handleBatchMove = () => {
+    if (selectedRowKeys.length === 0) return
+    setSelectedFile(null)
+    setMoveModalVisible(true)
+    moveForm.setFieldsValue({ spaceId: undefined, folderId: undefined })
   }
 
   const handleMoveConfirm = async (values: any) => {
-    if (!selectedFile) return
+    const isBatch = selectedRowKeys.length > 0
+    const idsToMove: number[] = isBatch ? (selectedRowKeys as number[]) : (selectedFile ? [selectedFile.id] : [])
+
+    if (idsToMove.length === 0) return
     try {
-      await api.patch(`/files/${selectedFile.id}/move`, values)
-      message.success('文件移动成功')
+      let success = 0
+      let fail = 0
+      for (const id of idsToMove) {
+        try {
+          await api.patch(`/files/${id}/move`, values)
+          success += 1
+        } catch {
+          fail += 1
+        }
+      }
+      if (fail === 0) {
+        message.success(isBatch ? `已成功移动 ${success} 个文件` : '文件移动成功')
+      } else {
+        message.warning(`移动完成：成功 ${success} 个，失败 ${fail} 个`)
+      }
       setMoveModalVisible(false)
       setSelectedFile(null)
+      setSelectedRowKeys([])
       moveForm.resetFields()
       queryClient.invalidateQueries({ queryKey: ['files'] })
     } catch (error: any) {
       message.error(error.message || '移动失败')
+    }
+  }
+
+  // 批量删除（移至回收站）
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) return
+    const ids = selectedRowKeys as number[]
+    try {
+      let success = 0
+      let fail = 0
+      for (const id of ids) {
+        try {
+          await api.delete(`/files/${id}`)
+          success += 1
+        } catch {
+          fail += 1
+        }
+      }
+      if (fail === 0) {
+        message.success(`已将 ${success} 个文件移至回收站`)
+      } else {
+        message.warning(`删除完成：成功 ${success} 个，失败 ${fail} 个`)
+      }
+      setSelectedRowKeys([])
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+    } catch (error: any) {
+      message.error(error.message || '批量删除失败')
     }
   }
 
@@ -266,13 +313,12 @@ export default function Files() {
       dataIndex: 'original_name',
       key: 'original_name',
       render: (text: string, record: any) => (
-        <a 
+        <a
           href={`/files/${record.id}`}
           onClick={(e) => {
             e.preventDefault()
             navigate(`/files/${record.id}`)
           }}
-          style={{ color: '#1890ff' }}
         >
           {text}
         </a>
@@ -282,7 +328,14 @@ export default function Files() {
       title: '所属空间',
       dataIndex: 'space_name',
       key: 'space_name',
-      render: (name: string) => name || <span style={{ color: '#999' }}>未分类</span>
+      render: (name: string) => name || <span style={{ color: 'var(--text-muted)' }}>未分类</span>
+    },
+    {
+      title: '所在文件夹',
+      dataIndex: 'folder_name',
+      key: 'folder_name',
+      render: (name: string, record: any) =>
+        record.folder_id ? (name || <span style={{ color: 'var(--text-muted)' }}>已删除</span>) : <span style={{ color: 'var(--text-muted)' }}>根目录</span>
     },
     {
       title: '大小',
@@ -327,16 +380,51 @@ export default function Files() {
     }
   ]
 
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: (keys: React.Key[]) => setSelectedRowKeys(keys)
+  }
+
+  const isBatchMove = selectedRowKeys.length > 0 && !selectedFile
+
   return (
-    <div>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Input
-          placeholder="搜索文件..."
-          prefix={<SearchOutlined />}
-          style={{ width: 300 }}
-          value={searchKeyword}
-          onChange={(e) => setSearchKeyword(e.target.value)}
-        />
+    <div className="page-content">
+      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
+        <Space wrap>
+          <Input
+            placeholder="搜索文件..."
+            prefix={<SearchOutlined />}
+            style={{ width: 300 }}
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+          />
+          {selectedRowKeys.length > 0 && (
+            <Space>
+              <span style={{ color: 'var(--text-secondary)' }}>已选 {selectedRowKeys.length} 个文件</span>
+              <Button
+                type="default"
+                icon={<FolderOutlined />}
+                onClick={handleBatchMove}
+              >
+                批量移动
+              </Button>
+              <Popconfirm
+                title={`确定将选中的 ${selectedRowKeys.length} 个文件移至回收站吗？`}
+                onConfirm={handleBatchDelete}
+                okText="确定"
+                cancelText="取消"
+                okType="danger"
+              >
+                <Button type="default" danger icon={<DeleteOutlined />}>
+                  批量删除
+                </Button>
+              </Popconfirm>
+              <Button type="link" onClick={() => setSelectedRowKeys([])}>
+                取消选择
+              </Button>
+            </Space>
+          )}
+        </Space>
         <Upload {...uploadProps}>
           <Button type="primary" icon={<UploadOutlined />}>
             上传文件
@@ -345,6 +433,7 @@ export default function Files() {
       </Space>
 
       <Table
+        rowSelection={rowSelection}
         columns={columns}
         dataSource={data?.data?.files || []}
         loading={isLoading}
@@ -357,9 +446,9 @@ export default function Files() {
         }}
       />
 
-      {/* 移动文件弹窗 */}
+      {/* 移动文件弹窗（支持单个与批量） */}
       <Modal
-        title="移动文件到空间"
+        title={selectedRowKeys.length > 0 && !selectedFile ? `批量移动（${selectedRowKeys.length} 个文件）` : '移动文件到空间'}
         open={moveModalVisible}
         onCancel={() => {
           setMoveModalVisible(false)

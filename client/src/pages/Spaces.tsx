@@ -216,7 +216,7 @@ export default function Spaces() {
       render: (permissions: string[]) => (
         <Space>
           {permissions.map(perm => (
-            <Tag key={perm} color="blue">{permissionTypeMap[perm] || perm}</Tag>
+            <Tag key={perm} color="cyan">{permissionTypeMap[perm] || perm}</Tag>
           ))}
         </Space>
       )
@@ -238,9 +238,9 @@ export default function Spaces() {
   ]
 
   return (
-    <div>
+    <div className="page-content">
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <h2>空间管理</h2>
+        <h2 className="page-title" style={{ marginBottom: 0 }}>空间管理</h2>
         <Button 
           type="primary" 
           icon={<PlusOutlined />}

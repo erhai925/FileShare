@@ -253,7 +253,7 @@ export default function Admin() {
   ]
 
   return (
-    <div>
+    <div className="page-content">
       <Tabs
         items={[
           {
@@ -267,7 +267,7 @@ export default function Admin() {
             children: (
               <div>
                 <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3>用户列表</h3>
+                  <h3 className="page-title" style={{ marginBottom: 0 }}>用户列表</h3>
                   <Button 
                     type="primary" 
                     icon={<PlusOutlined />}

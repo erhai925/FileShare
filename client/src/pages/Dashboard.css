@@ -1,0 +1,82 @@
+/* 工作台：交错入场动效 + 卡片悬停层次 */
+.dashboard-page {
+  animation: dashboardReveal 0.4s ease-out;
+}
+
+@keyframes dashboardReveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.dashboard-page .dashboard-title {
+  font-family: var(--font-display);
+  margin-bottom: 24px;
+}
+
+.dashboard-stats .ant-col {
+  animation: statCardReveal 0.5s ease-out backwards;
+}
+
+.dashboard-stats .ant-col:nth-child(1) { animation-delay: 0.05s; }
+.dashboard-stats .ant-col:nth-child(2) { animation-delay: 0.1s; }
+.dashboard-stats .ant-col:nth-child(3) { animation-delay: 0.15s; }
+.dashboard-stats .ant-col:nth-child(4) { animation-delay: 0.2s; }
+
+@keyframes statCardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dashboard-stats .ant-card {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.dashboard-stats .ant-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+.dashboard-stats .ant-statistic-title {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.dashboard-stats .ant-statistic-content {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+.dashboard-section .ant-card {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s ease;
+}
+
+.dashboard-section .ant-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.dashboard-section .ant-card-head-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+/* 排行榜与链接使用强调色 */
+.dashboard-page .ant-list-item a {
+  color: var(--color-accent);
+}
+.dashboard-page .ant-list-item a:hover {
+  color: var(--color-accent-hover);
+}

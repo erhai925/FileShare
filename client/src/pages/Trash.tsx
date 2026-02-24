@@ -90,7 +90,14 @@ export default function Trash() {
       title: '所属空间',
       dataIndex: 'space_name',
       key: 'space_name',
-      render: (name: string) => name || <span style={{ color: '#999' }}>未分类</span>
+      render: (name: string) => name || <span style={{ color: 'var(--text-muted)' }}>未分类</span>
+    },
+    {
+      title: '原所在文件夹',
+      dataIndex: 'folder_name',
+      key: 'folder_name',
+      render: (name: string, record: any) =>
+        record.folder_id ? (name || <span style={{ color: 'var(--text-muted)' }}>已删除</span>) : <span style={{ color: 'var(--text-muted)' }}>根目录</span>
     },
     {
       title: '大小',
@@ -135,9 +142,9 @@ export default function Trash() {
   }
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="page-content">
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>回收站</h2>
+        <h2 className="page-title" style={{ marginBottom: 0 }}>回收站</h2>
         <Space>
           {selectedRowKeys.length > 0 && (
             <>
@@ -169,8 +176,8 @@ export default function Trash() {
         </Space>
       </div>
 
-      <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#fffbe6', borderRadius: 4 }}>
-        <Tag color="warning">提示</Tag>
+      <div style={{ marginBottom: 16, padding: 12, backgroundColor: 'var(--color-accent-light)', borderRadius: 8 }}>
+        <Tag color="cyan">提示</Tag>
         回收站中的文件将在 30 天后自动清理。管理员可以在系统设置中手动清理过期文件。
       </div>
 

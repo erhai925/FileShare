@@ -39,8 +39,39 @@ export default function SpaceDetail() {
   const [renameFileForm] = Form.useForm()
   const [spaceSearchKeyword, setSpaceSearchKeyword] = useState('')
   const [debouncedSpaceSearch, setDebouncedSpaceSearch] = useState('')
+  const [searchSelectedRowKeys, setSearchSelectedRowKeys] = useState<React.Key[]>([])
+  const [fileListSelectedRowKeys, setFileListSelectedRowKeys] = useState<React.Key[]>([])
+  const [folderFilesSelectedRowKeys, setFolderFilesSelectedRowKeys] = useState<React.Key[]>([])
+  const [batchFileIds, setBatchFileIds] = useState<number[]>([])
+  const [moveSubmitting, setMoveSubmitting] = useState(false)
 
   const spaceIdNum = spaceId ? parseInt(spaceId) : null
+
+  // 当前用于批量操作的选中项（优先搜索 > 文件列表 > 文件夹内文件）
+  const batchIds = searchSelectedRowKeys.length
+    ? searchSelectedRowKeys
+    : fileListSelectedRowKeys.length
+      ? fileListSelectedRowKeys
+      : folderFilesSelectedRowKeys
+  const batchCount = Array.isArray(batchIds) ? batchIds.length : 0
+  const batchSource = searchSelectedRowKeys.length
+    ? 'search'
+    : fileListSelectedRowKeys.length
+      ? 'fileList'
+      : folderFilesSelectedRowKeys.length
+        ? 'folderFiles'
+        : null
+
+  const clearBatchSelection = () => {
+    setSearchSelectedRowKeys([])
+    setFileListSelectedRowKeys([])
+    setFolderFilesSelectedRowKeys([])
+  }
+  const clearCurrentBatchSelection = () => {
+    if (batchSource === 'search') setSearchSelectedRowKeys([])
+    else if (batchSource === 'fileList') setFileListSelectedRowKeys([])
+    else if (batchSource === 'folderFiles') setFolderFilesSelectedRowKeys([])
+  }
 
   // 从 URL 读取 folderId，支持直接跳转到指定文件夹
   useEffect(() => {
@@ -338,21 +369,104 @@ export default function SpaceDetail() {
 
   const handleMoveFile = (file: any) => {
     setSelectedFile(file)
+    setBatchFileIds([])
     moveFileForm.setFieldsValue({
       folderId: file.folder_id || null
     })
     setMoveFileModalVisible(true)
   }
 
+  const handleBatchMoveInSpace = () => {
+    if (batchCount === 0 || !spaceIdNum) return
+    setSelectedFile(null)
+    setBatchFileIds(batchIds as number[])
+    moveFileForm.setFieldsValue({ folderId: null })
+    setMoveFileModalVisible(true)
+  }
+
   const handleMoveFileConfirm = async (values: any) => {
-    if (!selectedFile || !spaceIdNum) return
-    await moveFileMutation.mutateAsync({
-      fileId: selectedFile.id,
-      data: {
-        spaceId: spaceIdNum, // 确保文件在同一空间内移动
-        folderId: values.folderId || null
+    const idsToMove = batchFileIds.length > 0 ? batchFileIds : (selectedFile ? [selectedFile.id] : [])
+    if (idsToMove.length === 0 || !spaceIdNum) return
+
+    const data = {
+      spaceId: spaceIdNum,
+      folderId: values.folderId || null
+    }
+    setMoveSubmitting(true)
+    try {
+      let success = 0
+      let fail = 0
+      for (const fileId of idsToMove) {
+        try {
+          await api.patch(`/files/${fileId}/move`, data)
+          success += 1
+        } catch {
+          fail += 1
+        }
       }
-    })
+      setMoveFileModalVisible(false)
+      setSelectedFile(null)
+      setBatchFileIds([])
+      moveFileForm.resetFields()
+      clearCurrentBatchSelection()
+      refetchFileTree()
+      refetchSpaceDetail()
+      if (selectedFolderId) refetchFolderFiles()
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+      if (fail === 0) {
+        message.success(idsToMove.length > 1 ? `已成功移动 ${success} 个文件` : '文件移动成功')
+      } else {
+        message.warning(`移动完成：成功 ${success} 个，失败 ${fail} 个`)
+      }
+    } catch (error: any) {
+      message.error(error.message || '移动失败')
+    } finally {
+      setMoveSubmitting(false)
+    }
+  }
+
+  const handleBatchDeleteInSpace = async () => {
+    if (batchCount === 0) return
+    const ids = batchIds as number[]
+    try {
+      let success = 0
+      for (const id of ids) {
+        try {
+          await api.delete(`/files/${id}`)
+          success += 1
+        } catch {}
+      }
+      message.success(`已将 ${success} 个文件移至回收站`)
+      clearCurrentBatchSelection()
+      refetchSpaceDetail()
+      refetchFileTree()
+      if (selectedFolderId) refetchFolderFiles()
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+    } catch (e: any) {
+      message.error(e?.message || '批量删除失败')
+    }
+  }
+
+  const handleBatchRemoveFromSpace = async () => {
+    if (batchCount === 0) return
+    const ids = batchIds as number[]
+    try {
+      let success = 0
+      for (const id of ids) {
+        try {
+          await api.patch(`/files/${id}/remove-from-space`)
+          success += 1
+        } catch {}
+      }
+      message.success(`已从空间移除 ${success} 个文件`)
+      clearCurrentBatchSelection()
+      refetchSpaceDetail()
+      refetchFileTree()
+      if (selectedFolderId) refetchFolderFiles()
+      queryClient.invalidateQueries({ queryKey: ['files'] })
+    } catch (e: any) {
+      message.error(e?.message || '批量移除失败')
+    }
   }
 
   const handleDownload = async (fileId: number, fileName: string) => {
@@ -439,7 +553,6 @@ export default function SpaceDetail() {
                 e.stopPropagation()
                 navigate(`/files/${file.id}`)
               }}
-              style={{ color: '#1890ff' }}
             >
               {file.original_name}
             </a>
@@ -483,7 +596,6 @@ export default function SpaceDetail() {
                   e.stopPropagation()
                   navigate(`/files/${file.id}`)
                 }}
-                style={{ color: '#1890ff' }}
               >
                 {file.original_name}
               </a>
@@ -520,7 +632,7 @@ export default function SpaceDetail() {
             <span>
               {folder.name}
               {folderFiles.length > 0 && (
-                <span style={{ color: '#999', marginLeft: 8, fontSize: '12px' }}>
+                <span style={{ color: 'var(--text-muted)', marginLeft: 8, fontSize: '12px' }}>
                   ({folderFiles.length} 个文件)
                 </span>
               )}
@@ -687,7 +799,7 @@ export default function SpaceDetail() {
   const space = spaceDetail.data
 
   return (
-    <div>
+    <div className="page-content">
       <Breadcrumb style={{ marginBottom: 16 }}>
         <Breadcrumb.Item>
           <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/spaces')}>
@@ -701,7 +813,7 @@ export default function SpaceDetail() {
         <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
           <div>
             <Title level={2} style={{ margin: 0 }}>{space.name}</Title>
-            <div style={{ marginTop: 8, color: '#666' }}>
+            <div style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
               {spaceTypeMap[space.type] || space.type}
               {space.description && ` • ${space.description}`}
             </div>
@@ -716,7 +828,7 @@ export default function SpaceDetail() {
           </Space>
         </Space>
 
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
           <Input
             placeholder="搜索本空间内的文件..."
             prefix={<SearchOutlined />}
@@ -725,14 +837,50 @@ export default function SpaceDetail() {
             onChange={(e) => setSpaceSearchKeyword(e.target.value)}
             style={{ maxWidth: 400 }}
           />
+          {batchCount > 0 && (
+            <Space wrap>
+              <span style={{ color: 'var(--text-secondary)' }}>已选 {batchCount} 个文件</span>
+              <Button type="default" icon={<FolderOpenOutlined />} onClick={handleBatchMoveInSpace}>
+                批量移动
+              </Button>
+              <Popconfirm
+                title={`确定将选中的 ${batchCount} 个文件移至回收站吗？`}
+                onConfirm={handleBatchDeleteInSpace}
+                okText="确定"
+                cancelText="取消"
+                okType="danger"
+              >
+                <Button type="default" danger icon={<DeleteOutlined />}>
+                  批量删除
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={`确定将选中的 ${batchCount} 个文件从本空间移除吗？`}
+                onConfirm={handleBatchRemoveFromSpace}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button type="default" icon={<FolderOutlined />}>
+                  从空间移除
+                </Button>
+              </Popconfirm>
+              <Button type="link" onClick={clearBatchSelection}>
+                取消选择
+              </Button>
+            </Space>
+          )}
         </div>
 
         {debouncedSpaceSearch.trim() ? (
           <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8, color: '#666' }}>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)' }}>
               搜索「{debouncedSpaceSearch}」共 {spaceSearchData?.data?.total ?? 0} 个结果
             </div>
             <Table
+              rowSelection={{
+                selectedRowKeys: searchSelectedRowKeys,
+                onChange: (keys) => setSearchSelectedRowKeys(keys)
+              }}
               columns={[
                 {
                   title: '文件名',
@@ -745,11 +893,17 @@ export default function SpaceDetail() {
                         e.preventDefault()
                         navigate(`/files/${record.id}`)
                       }}
-                      style={{ color: '#1890ff' }}
                     >
                       {text}
                     </a>
                   )
+                },
+                {
+                  title: '所在文件夹',
+                  dataIndex: 'folder_name',
+                  key: 'folder_name',
+                  render: (_: any, record: any) =>
+                    record.folder_id ? (record.folder_name || <span style={{ color: 'var(--text-muted)' }}>已删除</span>) : <span style={{ color: 'var(--text-muted)' }}>根目录</span>
                 },
                 {
                   title: '大小',
@@ -864,19 +1018,22 @@ export default function SpaceDetail() {
                     </Upload>
                   </Space>
                   <Table
+                    rowSelection={{
+                      selectedRowKeys: fileListSelectedRowKeys,
+                      onChange: (keys) => setFileListSelectedRowKeys(keys)
+                    }}
                     columns={[
                       {
                         title: '文件名',
                         dataIndex: 'original_name',
                         key: 'original_name',
                         render: (text: string, record: any) => (
-                          <a 
+                          <a
                             href={`/files/${record.id}`}
                             onClick={(e) => {
                               e.preventDefault()
                               navigate(`/files/${record.id}`)
                             }}
-                            style={{ color: '#1890ff' }}
                           >
                             {text}
                           </a>
@@ -976,11 +1133,26 @@ export default function SpaceDetail() {
                         </Upload>
                       </Space>
                       <Table
+                        rowSelection={{
+                          selectedRowKeys: folderFilesSelectedRowKeys,
+                          onChange: (keys) => setFolderFilesSelectedRowKeys(keys)
+                        }}
                         columns={[
                           {
                             title: '文件名',
                             dataIndex: 'original_name',
-                            key: 'original_name'
+                            key: 'original_name',
+                            render: (text: string, record: any) => (
+                              <a
+                                href={`/files/${record.id}`}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  navigate(`/files/${record.id}`)
+                                }}
+                              >
+                                {text}
+                              </a>
+                            )
                           },
                           {
                             title: '大小',
@@ -1268,17 +1440,18 @@ export default function SpaceDetail() {
         </Form>
       </Modal>
 
-      {/* 移动文件弹窗 */}
+      {/* 移动文件弹窗（支持单个与批量） */}
       <Modal
-        title="移动文件到文件夹"
+        title={batchFileIds.length > 0 ? `批量移动（${batchFileIds.length} 个文件）` : '移动文件到文件夹'}
         open={moveFileModalVisible}
         onCancel={() => {
           setMoveFileModalVisible(false)
           setSelectedFile(null)
+          setBatchFileIds([])
           moveFileForm.resetFields()
         }}
         onOk={() => moveFileForm.submit()}
-        confirmLoading={moveFileMutation.isPending}
+        confirmLoading={moveSubmitting}
         width={500}
       >
         <Form
@@ -1286,9 +1459,11 @@ export default function SpaceDetail() {
           layout="vertical"
           onFinish={handleMoveFileConfirm}
         >
-          <Form.Item label="文件名称">
-            <Input value={selectedFile?.original_name} disabled />
-          </Form.Item>
+          {batchFileIds.length === 0 && selectedFile && (
+            <Form.Item label="文件名称">
+              <Input value={selectedFile.original_name} disabled />
+            </Form.Item>
+          )}
           <Form.Item
             name="folderId"
             label="选择文件夹"

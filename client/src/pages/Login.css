@@ -1,20 +1,74 @@
+/* 登录页：深色编辑风 + 几何背景，避免通用紫色渐变 */
 .login-container {
   display: flex;
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #0f172a;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 背景层次：渐变网格 + 几何图形 */
+.login-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg, rgba(13, 148, 136, 0.08) 0%, transparent 50%),
+    linear-gradient(225deg, rgba(30, 41, 59, 0.9) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.login-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
 }
 
 .login-card {
-  width: 400px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 420px;
+  border-radius: var(--radius-lg, 16px);
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  animation: loginCardReveal 0.6s ease-out;
+}
+
+@keyframes loginCardReveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-card .ant-card-head {
+  font-family: var(--font-display);
+  font-weight: 700;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.login-card .ant-card-head-title {
+  font-size: 1.25rem;
+  color: var(--text-primary);
 }
 
 .login-footer {
-  margin-top: 16px;
+  margin-top: 20px;
   text-align: center;
-  color: #999;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -22,7 +76,13 @@
   margin: 4px 0;
 }
 
+.login-card .ant-btn-primary {
+  height: 44px;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 8px);
+}
 
-
-
-
+.login-card .ant-input-affix-wrapper,
+.login-card .ant-input {
+  border-radius: var(--radius-sm, 8px);
+}

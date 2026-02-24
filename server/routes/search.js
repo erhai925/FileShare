@@ -11,7 +11,8 @@ router.get('/', authenticate, async (req, res) => {
     
     let sql = `SELECT f.*, 
       u1.username as creator_name, u1.real_name as creator_real_name,
-      s.name as space_name
+      s.name as space_name,
+      (SELECT name FROM folders WHERE id = f.folder_id LIMIT 1) as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN spaces s ON f.space_id = s.id

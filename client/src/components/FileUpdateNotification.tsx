@@ -107,6 +107,7 @@ export default function FileUpdateNotification({ visible, files, onClose }: File
                   <Space direction="vertical" size="small">
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {file.space_name && `空间：${file.space_name}`}
+                      {file.folder_name && ` / ${file.folder_name}`}
                     </Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {formatRelativeTime(file.updated_at || file.created_at)}

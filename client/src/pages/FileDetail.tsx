@@ -244,7 +244,7 @@ export default function FileDetail() {
   }
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="page-content">
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
           返回

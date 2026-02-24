@@ -171,8 +171,9 @@ export default function Layout() {
         </div>
       </Header>
       <AntLayout>
-        <Sider width={200} className="app-sider">
+        <Sider width={220} className="app-sider">
           <Menu
+            theme="dark"
             mode="inline"
             selectedKeys={[location.pathname]}
             items={menuItems}

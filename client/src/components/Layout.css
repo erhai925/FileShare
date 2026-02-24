@@ -1,3 +1,4 @@
+/* 主布局：深色顶栏 + 侧栏，与设计令牌一致 */
 .app-layout {
   min-height: 100vh;
 }
@@ -6,14 +7,19 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #001529;
+  background: var(--bg-header);
   padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid var(--border-sider);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .logo {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
   color: #fff;
-  font-size: 20px;
-  font-weight: bold;
 }
 
 .header-right {
@@ -24,31 +30,62 @@
 .user-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
-  color: #fff;
-  padding: 4px 12px;
-  border-radius: 4px;
-  transition: background 0.3s;
+  color: rgba(255, 255, 255, 0.9);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .user-info:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-sider-hover);
+  color: #fff;
 }
 
 .username {
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
+/* 侧栏 */
 .app-sider {
-  background: #fff;
+  background: var(--bg-sider) !important;
+  border-right: 1px solid var(--border-sider);
 }
 
+.app-sider .ant-menu {
+  background: transparent !important;
+  border-right: none !important;
+  padding: 12px 8px;
+}
+
+.app-sider .ant-menu-item {
+  border-radius: var(--radius-sm);
+  margin: 2px 0;
+  height: 44px;
+  line-height: 44px;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.app-sider .ant-menu-item-selected {
+  background: var(--color-accent-light) !important;
+  color: #2dd4bf !important;
+}
+
+.app-sider .ant-menu-item:hover {
+  color: #94a3b8 !important;
+}
+
+/* 内容区 */
 .app-content {
   margin: 24px;
   padding: 24px;
-  background: #fff;
+  background: var(--bg-card);
   min-height: 280px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s ease;
 }
 
 /* 文件通知弹框样式 */
@@ -59,8 +96,3 @@
 .file-notification-modal .ant-modal {
   pointer-events: auto !important;
 }
-
-
-
-
-
