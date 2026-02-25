@@ -233,24 +233,6 @@ export default function SpaceDetail() {
     }
   })
 
-  // 移动文件
-  const moveFileMutation = useMutation({
-    mutationFn: ({ fileId, data }: { fileId: number, data: any }) =>
-      api.patch(`/files/${fileId}/move`, data),
-    onSuccess: () => {
-      message.success('文件移动成功')
-      setMoveFileModalVisible(false)
-      setSelectedFile(null)
-      moveFileForm.resetFields()
-      refetchFileTree()
-      refetchSpaceDetail()
-      queryClient.invalidateQueries({ queryKey: ['files'] })
-    },
-    onError: (error: any) => {
-      message.error(error.message || '移动文件失败')
-    }
-  })
-
   // 空间内文件上传配置
   const spaceUploadProps: UploadProps = {
     name: 'file',

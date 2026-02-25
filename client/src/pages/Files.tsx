@@ -385,8 +385,6 @@ export default function Files() {
     onChange: (keys: React.Key[]) => setSelectedRowKeys(keys)
   }
 
-  const isBatchMove = selectedRowKeys.length > 0 && !selectedFile
-
   return (
     <div className="page-content">
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
