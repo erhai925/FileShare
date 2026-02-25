@@ -3,7 +3,23 @@ import { App, Upload, Progress, Button, message as antdMessage } from 'antd'
 import type { MessageInstance } from 'antd/es/message/interface'
 import { PauseOutlined, PlayCircleOutlined, CloseOutlined, UploadOutlined } from '@ant-design/icons'
 import api from '../services/api'
-import { useAuthStore } from '../stores/authStore'
+
+/** 接口返回为 response.data（axios 拦截器已剥掉一层），此处按后端 body 类型使用 */
+type ApiBody = { success?: boolean; data?: Record<string, unknown>; message?: string }
+
+/** 上传状态接口返回的 data */
+interface UploadStatusData {
+  status?: string
+  fileId?: number
+  fileName?: string
+  uploadedChunkIndices?: number[]
+}
+/** 完成上传接口返回的 data */
+interface CompleteUploadData {
+  fileId: number
+  fileName: string
+  fileSize?: number
+}
 
 interface ChunkUploadProps {
   onSuccess?: (fileId: number, fileName: string) => void
@@ -27,7 +43,6 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
   const [uploadId, setUploadId] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string>('')
   const [statusText, setStatusText] = useState<string>('')
-  const { token } = useAuthStore()
   /** 异步 handleUpload 内用 ref 读取当前状态，避免闭包拿到旧的 uploading/paused 导致循环直接退出 */
   const uploadingRef = useRef(false)
   const pausedRef = useRef(false)
@@ -45,7 +60,7 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
     const totalChunks = Math.ceil(file.size / chunkSize)
     
     try {
-      const response = await api.post('/files/upload/init', {
+      const response = (await api.post('/files/upload/init', {
         fileName: file.name,
         fileSize: file.size,
         mimeType: file.type,
@@ -53,10 +68,10 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
         chunkSize,
         folderId,
         spaceId
-      })
+      })) as ApiBody
 
       if (response?.success && response?.data?.uploadId) {
-        return response.data.uploadId
+        return response.data.uploadId as string
       }
       throw new Error(response?.message || '初始化上传失败')
     } catch (error: any) {
@@ -74,8 +89,7 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
     formData.append('chunkIndex', chunkIndex.toString())
 
     try {
-      const response = await api.post('/files/upload/chunk', formData)
-
+      const response = (await api.post('/files/upload/chunk', formData)) as ApiBody
       return response?.success === true
     } catch (error: any) {
       console.error(`上传分块 ${chunkIndex} 失败:`, error)
@@ -84,11 +98,11 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
   }
 
   // 查询上传状态
-  const checkUploadStatus = async (uploadId: string) => {
+  const checkUploadStatus = async (uploadId: string): Promise<UploadStatusData | null> => {
     try {
-      const response = await api.get(`/files/upload/status/${uploadId}`)
+      const response = (await api.get(`/files/upload/status/${uploadId}`)) as ApiBody
       if (response?.success && response?.data) {
-        return response.data
+        return response.data as UploadStatusData
       }
       return null
     } catch (error) {
@@ -98,11 +112,11 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
   }
 
   // 完成上传
-  const completeUpload = async (uploadId: string) => {
+  const completeUpload = async (uploadId: string): Promise<CompleteUploadData> => {
     try {
-      const response = await api.post('/files/upload/complete', { uploadId })
+      const response = (await api.post('/files/upload/complete', { uploadId })) as ApiBody
       if (response?.success && response?.data) {
-        return response.data
+        return response.data as unknown as CompleteUploadData
       }
       throw new Error(response?.message || '完成上传失败')
     } catch (error: any) {
@@ -155,8 +169,8 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
       const status = await checkUploadStatus(currentUploadId)
       if (status && status.status === 'completed') {
         message.success('文件已上传完成')
-        if (onSuccess && status.fileId) {
-          onSuccess(status.fileId, status.fileName)
+        if (onSuccess && status.fileId != null) {
+          onSuccess(status.fileId, status.fileName ?? '')
         }
         uploadingRef.current = false
         setUploading(false)
