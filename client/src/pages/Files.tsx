@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import FilePreview from '../components/FilePreview'
 import FileActions from '../components/FileActions'
+import ChunkUpload from '../components/ChunkUpload'
 import { formatDateTime } from '../utils/date'
 import type { UploadProps } from 'antd'
 
@@ -44,6 +45,7 @@ export default function Files() {
   const [renameModalVisible, setRenameModalVisible] = useState(false)
   const [renameForm] = Form.useForm()
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [chunkUploadVisible, setChunkUploadVisible] = useState(false)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { token } = useAuthStore()
@@ -428,7 +430,26 @@ export default function Files() {
             上传文件
           </Button>
         </Upload>
+        <Button type="default" onClick={() => setChunkUploadVisible(true)}>
+          大文件上传（支持断点续传）
+        </Button>
       </Space>
+
+      {/* 大文件上传弹窗（分块上传，适合 50MB 以上） */}
+      <Modal
+        title="大文件上传（分块上传，支持断点续传）"
+        open={chunkUploadVisible}
+        onCancel={() => setChunkUploadVisible(false)}
+        footer={null}
+        width={520}
+      >
+        <ChunkUpload
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['files'] })
+            setChunkUploadVisible(false)
+          }}
+        />
+      </Modal>
 
       <Table
         rowSelection={rowSelection}

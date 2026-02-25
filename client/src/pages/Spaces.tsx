@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, List, Button, Space, Modal, Form, Input, Select, message, Table, Tag, Popconfirm } from 'antd'
-import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, FileOutlined } from '@ant-design/icons'
+import { Card, List, Button, Space, Modal, Form, Input, Select, message, Table, Tag, Popconfirm, Typography } from 'antd'
+import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, FileOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
@@ -104,6 +104,21 @@ export default function Spaces() {
     },
     onError: (error: any) => {
       message.error(error.message || '更新空间信息失败')
+    }
+  })
+
+  // 删除空间
+  const deleteSpaceMutation = useMutation({
+    mutationFn: (spaceId: number) => api.delete(`/spaces/${spaceId}`),
+    onSuccess: () => {
+      message.success('空间已删除')
+      setSettingsModalVisible(false)
+      setSelectedSpaceId(null)
+      setSelectedSpace(null)
+      queryClient.invalidateQueries({ queryKey: ['spaces'] })
+    },
+    onError: (error: any) => {
+      message.error(error.response?.data?.message || error.message || '删除空间失败')
     }
   })
 
@@ -280,11 +295,33 @@ export default function Spaces() {
                   onClick={() => handleOpenSettings(item)}
                 >
                   设置
-                </Button>
+                </Button>,
+                <Popconfirm
+                  title="删除空间"
+                  description={
+                    <div>
+                      <p style={{ marginBottom: 8 }}>删除前请确认已按以下步骤操作：</p>
+                      <ol style={{ margin: 0, paddingLeft: 18 }}>
+                        <li>清空空间内所有文件（移出空间或删除）</li>
+                        <li>删除空间内所有文件夹</li>
+                        <li>再点击「确定」删除空间</li>
+                      </ol>
+                      <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>确定要删除空间「{item.name}」吗？此操作不可恢复。</p>
+                    </div>
+                  }
+                  okText="确定删除"
+                  cancelText="取消"
+                  okType="danger"
+                  onConfirm={() => deleteSpaceMutation.mutate(item.id)}
+                >
+                  <Button type="link" danger icon={<DeleteOutlined />}>
+                    删除空间
+                  </Button>
+                </Popconfirm>
               ]}
             >
               <Card.Meta
-                title={item.name}
+                title={<Typography.Text ellipsis={{ tooltip: item.name }}>{item.name}</Typography.Text>}
                 description={spaceTypeMap[item.type] || item.type}
               />
             </Card>

@@ -121,16 +121,18 @@ async function checkVersion(projectRoot) {
 async function getDeploymentPaths() {
   logStep(0, '配置部署路径（直接回车使用默认值）');
 
+  const defaultProjectRoot = '/home/FileShare-main';
   const projectRoot = path.resolve(__dirname, '..');
-  const defaultDbPath = path.join(projectRoot, 'data', 'fileshare.db');
-  const defaultStoragePath = path.join(projectRoot, 'storage');
-  const defaultBackupPath = path.join(projectRoot, 'backups');
+  const defaultDbPath = path.join(defaultProjectRoot, 'data', 'fileshare.db');
+  const defaultStoragePath = path.join(defaultProjectRoot, 'storage');
+  const defaultBackupPath = path.join(defaultProjectRoot, 'backups');
 
   logInfo(`当前脚本所在项目根目录: ${projectRoot}`);
+  logInfo(`默认部署目录: ${defaultProjectRoot}`);
   logInfo('若部署路径与上述相同，直接回车即可');
   log('');
 
-  const projectRootInput = await question('项目部署根目录（代码所在路径）', projectRoot);
+  const projectRootInput = await question('项目部署根目录（代码所在路径）', defaultProjectRoot);
   const resolvedProjectRoot = path.resolve(projectRootInput);
 
   const dbPathInput = await question('数据库文件路径 (DB_PATH)', path.join(resolvedProjectRoot, 'data', 'fileshare.db'));

@@ -12,6 +12,8 @@ const router = express.Router();
 const { getStoragePath } = require('../utils/storage');
 
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 10737418240; // 10GB
+// 单次表单上传建议上限，超过则引导使用分块上传，避免大文件读入内存导致宕机
+const SINGLE_UPLOAD_MAX = parseInt(process.env.SINGLE_UPLOAD_MAX) || 50 * 1024 * 1024; // 50MB
 
 // 获取存储路径的辅助函数（异步）
 async function getStoragePathAsync() {
@@ -68,14 +70,29 @@ router.post('/upload', authenticate, (req, res, next) => {
     next();
   });
 }, async (req, res) => {
+  const safeRespond = (status, body) => {
+    try {
+      if (!res.headersSent) res.status(status).json(body);
+    } catch (e) {
+      console.error('上传接口响应失败:', e);
+    }
+  };
   try {
     if (!req.file) {
       console.error('上传失败: 未检测到文件');
-      return res.status(400).json({ success: false, message: '未选择文件' });
+      return safeRespond(400, { success: false, message: '未选择文件' });
+    }
+
+    const file = req.file;
+    if (file.size > SINGLE_UPLOAD_MAX) {
+      try { await fs.unlink(file.path); } catch (_) {}
+      return safeRespond(400, {
+        success: false,
+        message: `文件超过 ${(SINGLE_UPLOAD_MAX / 1024 / 1024).toFixed(0)}MB，单次上传可能不稳定。请使用「大文件上传」或分块上传（支持断点续传）。`
+      });
     }
     
     let { folderId, spaceId } = req.body;
-    const file = req.file;
     
     // 处理 folderId 和 spaceId：确保它们是有效的数字或 null
     // 如果前端传的是字符串 'undefined' 或 'null'，需要转换为 null
@@ -292,35 +309,24 @@ router.post('/upload', authenticate, (req, res, next) => {
     console.error('错误类型:', error.constructor.name);
     console.error('错误消息:', error.message);
     console.error('错误堆栈:', error.stack);
-    console.error('请求文件:', req.file);
-    console.error('请求用户:', req.user);
     
-    // 清理临时文件
     if (req.file && req.file.path) {
       try {
         await fs.unlink(req.file.path);
-        console.log('临时文件已清理:', req.file.path);
-      } catch (e) {
-        console.error('清理临时文件失败:', e);
-      }
+      } catch (e) {}
     }
     
-    // 返回详细的错误信息
     let errorMessage = '文件上传失败';
     if (error.code === 'LIMIT_FILE_SIZE') {
       errorMessage = `文件大小超过限制（最大${(MAX_FILE_SIZE / 1024 / 1024 / 1024).toFixed(2)}GB）`;
     } else if (error.message) {
       errorMessage = error.message;
     }
-    
-    res.status(500).json({ 
-      success: false, 
+    safeRespond(500, {
+      success: false,
       message: errorMessage,
-      error: process.env.NODE_ENV === 'development' ? {
-        message: error.message,
-        stack: error.stack,
-        name: error.constructor.name
-      } : undefined
+      hint: '大文件请使用分块上传（支持断点续传）',
+      error: process.env.NODE_ENV === 'development' ? { message: error.message, name: error.constructor.name } : undefined
     });
   }
 });

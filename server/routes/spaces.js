@@ -171,6 +171,48 @@ router.get('/:spaceId', authenticate, async (req, res) => {
   }
 });
 
+// 删除空间（仅允许空空间：无文件、无文件夹；仅管理员或空间所有者可删）
+router.delete('/:spaceId', authenticate, async (req, res) => {
+  try {
+    const { spaceId } = req.params;
+    const space = await db.get('SELECT * FROM spaces WHERE id = ?', [spaceId]);
+    if (!space) {
+      return res.status(404).json({ success: false, message: '空间不存在' });
+    }
+    if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: '只有管理员或空间所有者可以删除该空间' });
+    }
+
+    const fileCount = await db.get(
+      'SELECT COUNT(*) as c FROM files WHERE space_id = ? AND deleted_at IS NULL',
+      [spaceId]
+    );
+    const folderCount = await db.get(
+      'SELECT COUNT(*) as c FROM folders WHERE space_id = ?',
+      [spaceId]
+    );
+    if ((fileCount?.c || 0) > 0 || (folderCount?.c || 0) > 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请先清空空间内的所有文件和文件夹后再删除空间。可将文件移出空间或删除，并删除所有文件夹。'
+      });
+    }
+
+    await db.run('DELETE FROM permissions WHERE resource_type = ? AND resource_id = ?', ['space', spaceId]);
+    await db.run('DELETE FROM spaces WHERE id = ?', [spaceId]);
+
+    await logOperation(req.user.id, 'delete_space', 'space', parseInt(spaceId), {
+      spaceName: space.name,
+      spaceType: space.type
+    }, req);
+
+    res.json({ success: true, message: '空间已删除' });
+  } catch (error) {
+    console.error('删除空间失败:', error);
+    res.status(500).json({ success: false, message: '删除空间失败' });
+  }
+});
+
 // 更新空间信息
 router.put('/:spaceId', authenticate, async (req, res) => {
   try {

@@ -1,30 +1,57 @@
+/**
+ * 操作日志：写入 operation_logs 表。
+ * - IP：优先 req.ip（trust proxy 时来自 X-Forwarded-For），否则 socket/connection.remoteAddress，并规范化 ::ffff:IPv4。
+ * - 时间：统一使用东八区北京时间（Asia/Shanghai），格式 YYYY-MM-DD HH:mm:ss，便于后台展示与过期清理比较。
+ */
 const db = require('../config/database');
+
+// 东八区北京时间：格式 YYYY-MM-DD HH:mm:ss（与 SQLite 兼容，便于展示与比较）
+function getBeijingTimeString() {
+  return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+}
+
+// 从请求中解析客户端 IP（支持代理 X-Forwarded-For，并规范化 IPv6 映射的 IPv4）
+function getClientIp(req) {
+  if (!req) return 'unknown';
+  // Express 在 trust proxy 下会从 X-Forwarded-For 等头解析出 req.ip
+  const raw =
+    req.ip ||
+    req.get?.('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress;
+  if (!raw || raw === 'unknown') return 'unknown';
+  // IPv6 映射的 IPv4 如 ::ffff:192.168.1.1 转为 192.168.1.1
+  if (raw.startsWith('::ffff:')) return raw.slice(7);
+  return raw;
+}
 
 // 记录操作日志
 async function logOperation(userId, action, resourceType, resourceId, details, req) {
   try {
-    const ipAddress = req?.ip || req?.connection?.remoteAddress || 'unknown';
-    const userAgent = req?.get('user-agent') || 'unknown';
-    
+    const ipAddress = getClientIp(req);
+    const userAgent = req?.get?.('user-agent') || 'unknown';
+    const created_at = getBeijingTimeString();
+
     await db.run(
-      `INSERT INTO operation_logs (user_id, action, resource_type, resource_id, details, ip_address, user_agent)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [userId, action, resourceType, resourceId, JSON.stringify(details), ipAddress, userAgent]
+      `INSERT INTO operation_logs (user_id, action, resource_type, resource_id, details, ip_address, user_agent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, action, resourceType, resourceId, JSON.stringify(details), ipAddress, userAgent, created_at]
     );
   } catch (error) {
     console.error('记录操作日志失败:', error);
   }
 }
 
-// 清理过期日志
+// 清理过期日志（created_at 为东八区时间 YYYY-MM-DD HH:mm:ss， cutoff 使用同一时区与格式）
 async function cleanOldLogs(retentionDays = 90) {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
-    
+    const cutoffStr = cutoffDate.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+
     const result = await db.run(
       `DELETE FROM operation_logs WHERE created_at < ?`,
-      [cutoffDate.toISOString()]
+      [cutoffStr]
     );
     
     console.log(`清理了 ${result.changes} 条过期日志`);

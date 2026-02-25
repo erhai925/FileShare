@@ -788,13 +788,13 @@ export default function SpaceDetail() {
             返回空间列表
           </Button>
         </Breadcrumb.Item>
-        <Breadcrumb.Item>{space.name}</Breadcrumb.Item>
+        <Breadcrumb.Item><Typography.Text ellipsis={{ tooltip: space.name }}>{space.name}</Typography.Text></Breadcrumb.Item>
       </Breadcrumb>
 
       <Card>
         <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-          <div>
-            <Title level={2} style={{ margin: 0 }}>{space.name}</Title>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <Title level={2} style={{ margin: 0 }}><Typography.Text ellipsis={{ tooltip: space.name }}>{space.name}</Typography.Text></Title>
             <div style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
               {spaceTypeMap[space.type] || space.type}
               {space.description && ` • ${space.description}`}
