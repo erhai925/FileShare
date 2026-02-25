@@ -1451,13 +1451,8 @@ router.post('/upload/complete', authenticate, async (req, res) => {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, encryptedBuffer);
 
-    // 处理文件名编码
-    let originalFileName = upload.file_name;
-    try {
-      originalFileName = Buffer.from(upload.file_name, 'latin1').toString('utf8');
-    } catch (error) {
-      console.warn('文件名编码转换失败:', error);
-    }
+    // 分块上传的 file_name 来自客户端 JSON（已是 UTF-8），直接使用，不做 latin1 转换
+    const originalFileName = upload.file_name || '';
 
     // 保存文件记录到数据库
     const result = await db.run(

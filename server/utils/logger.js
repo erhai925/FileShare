@@ -1,6 +1,7 @@
 /**
  * 操作日志：写入 operation_logs 表。
- * - IP：优先 req.ip（trust proxy 时来自 X-Forwarded-For），否则 socket/connection.remoteAddress，并规范化 ::ffff:IPv4。
+ * - IP：优先从 X-Forwarded-For、X-Real-IP 取客户端（浏览器）IP，再 fallback 到 req.ip / socket.remoteAddress。
+ *   若前面有 Nginx 等反向代理，需在代理中配置转发：proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Real-IP $remote_addr;
  * - 时间：统一使用东八区北京时间（Asia/Shanghai），格式 YYYY-MM-DD HH:mm:ss，便于后台展示与过期清理比较。
  */
 const db = require('../config/database');
@@ -10,19 +11,38 @@ function getBeijingTimeString() {
   return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
 }
 
-// 从请求中解析客户端 IP（支持代理 X-Forwarded-For，并规范化 IPv6 映射的 IPv4）
+// 规范化 IP 字符串（IPv6 映射的 IPv4 如 ::ffff:192.168.1.1 转为 192.168.1.1）
+function normalizeIp(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || s === 'unknown') return null;
+  if (s.startsWith('::ffff:')) return s.slice(7);
+  return s;
+}
+
+// 从请求中解析客户端（浏览器）IP，优先从代理转发的请求头读取
 function getClientIp(req) {
   if (!req) return 'unknown';
-  // Express 在 trust proxy 下会从 X-Forwarded-For 等头解析出 req.ip
-  const raw =
-    req.ip ||
-    req.get?.('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    req.connection?.remoteAddress;
-  if (!raw || raw === 'unknown') return 'unknown';
-  // IPv6 映射的 IPv4 如 ::ffff:192.168.1.1 转为 192.168.1.1
-  if (raw.startsWith('::ffff:')) return raw.slice(7);
-  return raw;
+  // 1) X-Forwarded-For：标准头，逗号分隔，第一段为真实客户端 IP（代理会追加自己的 IP）
+  const xff = req.get?.('x-forwarded-for');
+  if (xff) {
+    const first = xff.split(',')[0]?.trim();
+    const normalized = normalizeIp(first);
+    if (normalized) return normalized;
+  }
+  // 2) X-Real-IP：常见于 Nginx 等，直接为客户端 IP
+  const xri = req.get?.('x-real-ip');
+  if (xri) {
+    const normalized = normalizeIp(xri);
+    if (normalized) return normalized;
+  }
+  // 3) Express 在 trust proxy 下会从上述头解析出 req.ip
+  const fromReqIp = normalizeIp(req.ip);
+  if (fromReqIp) return fromReqIp;
+  // 4) 直连时的 TCP 对端地址（无代理时即为浏览器所在机器）
+  const raw = req.socket?.remoteAddress || req.connection?.remoteAddress;
+  const normalized = normalizeIp(raw);
+  return normalized || 'unknown';
 }
 
 // 记录操作日志

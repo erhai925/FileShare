@@ -275,49 +275,31 @@ export default function Spaces() {
               hoverable
               cover={<FolderOutlined style={{ fontSize: 48, padding: 24, textAlign: 'center' }} />}
               actions={[
-                <Button 
-                  type="link" 
-                  icon={<FileOutlined />}
-                  onClick={() => handleViewSpaceDetail(item)}
-                >
-                  查看详情
-                </Button>,
-                <Button 
-                  type="link" 
-                  icon={<UserOutlined />}
-                  onClick={() => handleManageMembers(item.id)}
-                >
-                  成员管理
-                </Button>,
-                <Button 
-                  type="link" 
-                  icon={<SettingOutlined />}
-                  onClick={() => handleOpenSettings(item)}
-                >
-                  设置
-                </Button>,
-                <Popconfirm
-                  title="删除空间"
-                  description={
-                    <div>
-                      <p style={{ marginBottom: 8 }}>删除前请确认已按以下步骤操作：</p>
-                      <ol style={{ margin: 0, paddingLeft: 18 }}>
-                        <li>清空空间内所有文件（移出空间或删除）</li>
-                        <li>删除空间内所有文件夹</li>
-                        <li>再点击「确定」删除空间</li>
-                      </ol>
-                      <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>确定要删除空间「{item.name}」吗？此操作不可恢复。</p>
-                    </div>
-                  }
-                  okText="确定删除"
-                  cancelText="取消"
-                  okType="danger"
-                  onConfirm={() => deleteSpaceMutation.mutate(item.id)}
-                >
-                  <Button type="link" danger icon={<DeleteOutlined />}>
-                    删除空间
-                  </Button>
-                </Popconfirm>
+                <div key="actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', justifyContent: 'center', padding: '8px 0' }}>
+                  <Button type="link" size="small" icon={<FileOutlined />} onClick={() => handleViewSpaceDetail(item)}>详情</Button>
+                  <Button type="link" size="small" icon={<UserOutlined />} onClick={() => handleManageMembers(item.id)}>成员</Button>
+                  <Button type="link" size="small" icon={<SettingOutlined />} onClick={() => handleOpenSettings(item)}>设置</Button>
+                  <Popconfirm
+                    title="删除空间"
+                    description={
+                      <div>
+                        <p style={{ marginBottom: 8 }}>删除前请确认已按以下步骤操作：</p>
+                        <ol style={{ margin: 0, paddingLeft: 18 }}>
+                          <li>清空空间内所有文件（移出空间或删除）</li>
+                          <li>删除空间内所有文件夹</li>
+                          <li>再点击「确定」删除空间</li>
+                        </ol>
+                        <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>确定要删除空间「{item.name}」吗？此操作不可恢复。</p>
+                      </div>
+                    }
+                    okText="确定删除"
+                    cancelText="取消"
+                    okType="danger"
+                    onConfirm={() => deleteSpaceMutation.mutate(item.id)}
+                  >
+                    <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                  </Popconfirm>
+                </div>
               ]}
             >
               <Card.Meta

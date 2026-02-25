@@ -17,7 +17,10 @@ async function init() {
           reject(err);
         } else {
           console.log('数据库连接成功');
-          createTables().then(resolve).catch(reject);
+          createTables()
+            .then(() => ensureChunkUploadsFileId())
+            .then(resolve)
+            .catch(reject);
         }
       });
     }).catch(reject);
@@ -245,6 +248,16 @@ async function createTables() {
       });
     });
   });
+}
+
+// 为 chunk_uploads 表补全 file_id 列（完成上传时写入，兼容旧库）
+async function ensureChunkUploadsFileId() {
+  const rows = await query(`PRAGMA table_info(chunk_uploads)`);
+  const hasFileId = rows && rows.some(r => r.name === 'file_id');
+  if (!hasFileId) {
+    await run(`ALTER TABLE chunk_uploads ADD COLUMN file_id INTEGER REFERENCES files(id)`);
+    console.log('已为 chunk_uploads 表添加 file_id 列');
+  }
 }
 
 // 执行查询

@@ -1455,7 +1455,7 @@ export default function SpaceDetail() {
               placeholder="选择文件夹（留空表示根目录）"
               allowClear
             >
-              <Option value={null}>根目录（不分类到文件夹）</Option>
+              <Option value="">根目录（不分类到文件夹）</Option>
               {foldersData?.data && renderFolderOptions(foldersData.data)}
             </Select>
           </Form.Item>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Upload, Space, Input, message, Modal, Form, Select, Popconfirm } from 'antd'
+import { App, Table, Button, Upload, Space, Input, message, Modal, Form, Select, Popconfirm } from 'antd'
 import { UploadOutlined, SearchOutlined, FolderOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -12,6 +12,8 @@ import { formatDateTime } from '../utils/date'
 import type { UploadProps } from 'antd'
 
 const { Option } = Select
+/** 根目录在 Select 中用空字符串表示，避免 antd 的 value 不能为 null 的警告 */
+const ROOT_FOLDER_VALUE = ''
 
 // File System Access API 类型定义
 interface FileSystemFileHandle {
@@ -34,6 +36,7 @@ interface WindowWithFileSystem extends Window {
 }
 
 export default function Files() {
+  const { message: messageApi } = App.useApp()
   const [searchKeyword, setSearchKeyword] = useState('')
   const [debouncedKeyword, setDebouncedKeyword] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -46,6 +49,10 @@ export default function Files() {
   const [renameForm] = Form.useForm()
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [chunkUploadVisible, setChunkUploadVisible] = useState(false)
+  const [uploadSpaceId, setUploadSpaceId] = useState<number | undefined>(undefined)
+  const [uploadFolderId, setUploadFolderId] = useState<number | undefined>(undefined)
+  const [chunkUploadSpaceId, setChunkUploadSpaceId] = useState<number | undefined>(undefined)
+  const [chunkUploadFolderId, setChunkUploadFolderId] = useState<number | undefined>(undefined)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { token } = useAuthStore()
@@ -72,6 +79,20 @@ export default function Files() {
     queryKey: ['space-folders', selectedSpaceId],
     queryFn: () => api.get(`/spaces/${selectedSpaceId}/folders`),
     enabled: !!selectedSpaceId
+  })
+
+  // 上传目标：普通上传用空间的文件夹列表
+  const { data: uploadFoldersData } = useQuery({
+    queryKey: ['space-folders', uploadSpaceId],
+    queryFn: () => api.get(`/spaces/${uploadSpaceId}/folders`),
+    enabled: !!uploadSpaceId
+  })
+
+  // 大文件上传弹窗内用空间的文件夹列表
+  const { data: chunkUploadFoldersData } = useQuery({
+    queryKey: ['space-folders', chunkUploadSpaceId],
+    queryFn: () => api.get(`/spaces/${chunkUploadSpaceId}/folders`),
+    enabled: !!chunkUploadSpaceId
   })
 
   const { data, isLoading } = useQuery({
@@ -190,12 +211,13 @@ export default function Files() {
     const idsToMove: number[] = isBatch ? (selectedRowKeys as number[]) : (selectedFile ? [selectedFile.id] : [])
 
     if (idsToMove.length === 0) return
+    const payload = { ...values, folderId: values.folderId === ROOT_FOLDER_VALUE || values.folderId === undefined ? null : values.folderId }
     try {
       let success = 0
       let fail = 0
       for (const id of idsToMove) {
         try {
-          await api.patch(`/files/${id}/move`, values)
+          await api.patch(`/files/${id}/move`, payload)
           success += 1
         } catch {
           fail += 1
@@ -282,6 +304,10 @@ export default function Files() {
     headers: {
       Authorization: `Bearer ${token}`
     },
+    data: () => ({
+      spaceId: uploadSpaceId ?? '',
+      folderId: uploadFolderId ?? ''
+    }),
     onChange(info) {
       if (info.file.status === 'done') {
         const response = info.file.response
@@ -292,17 +318,17 @@ export default function Files() {
           message.error(response?.message || `${info.file.name} 上传失败`)
         }
       } else if (info.file.status === 'error') {
-        const error = info.file.error || info.file.response
-        const errorMsg = error?.message || error?.error?.message || `${info.file.name} 上传失败`
-        message.error(errorMsg)
-        console.error('上传错误:', error)
+        const res = info.file.response
+        const msg = res?.message || res?.hint || (info.file.error as any)?.message || `${info.file.name} 上传失败`
+        const alreadyHint = res?.hint || (typeof res?.message === 'string' && res.message.includes('大文件'))
+        message.error(alreadyHint ? msg : `${msg}；若文件较大请使用「大文件上传」`)
+        console.error('上传错误:', info.file.response || info.file.error)
       }
     },
     beforeUpload: (file) => {
-      // 可以在这里添加文件大小检查
       const isLt10GB = file.size / 1024 / 1024 / 1024 < 10
       if (!isLt10GB) {
-        message.error('文件大小不能超过10GB')
+        message.error('文件大小不能超过10GB，请使用「大文件上传」')
         return false
       }
       return true
@@ -389,66 +415,123 @@ export default function Files() {
 
   return (
     <div className="page-content">
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }} wrap>
-        <Space wrap>
-          <Input
-            placeholder="搜索文件..."
-            prefix={<SearchOutlined />}
-            style={{ width: 300 }}
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-          />
-          {selectedRowKeys.length > 0 && (
-            <Space>
-              <span style={{ color: 'var(--text-secondary)' }}>已选 {selectedRowKeys.length} 个文件</span>
-              <Button
-                type="default"
-                icon={<FolderOutlined />}
-                onClick={handleBatchMove}
-              >
-                批量移动
-              </Button>
-              <Popconfirm
-                title={`确定将选中的 ${selectedRowKeys.length} 个文件移至回收站吗？`}
-                onConfirm={handleBatchDelete}
-                okText="确定"
-                cancelText="取消"
-                okType="danger"
-              >
-                <Button type="default" danger icon={<DeleteOutlined />}>
-                  批量删除
-                </Button>
-              </Popconfirm>
-              <Button type="link" onClick={() => setSelectedRowKeys([])}>
-                取消选择
-              </Button>
-            </Space>
-          )}
+      <Space style={{ marginBottom: 16, width: '100%' }} direction="vertical" size="middle">
+        <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Space wrap>
+            <Input
+              placeholder="搜索文件..."
+              prefix={<SearchOutlined />}
+              style={{ width: 300 }}
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+            />
+            {selectedRowKeys.length > 0 && (
+              <Space>
+                <span style={{ color: 'var(--text-secondary)' }}>已选 {selectedRowKeys.length} 个文件</span>
+                <Button type="default" icon={<FolderOutlined />} onClick={handleBatchMove}>批量移动</Button>
+                <Popconfirm
+                  title={`确定将选中的 ${selectedRowKeys.length} 个文件移至回收站吗？`}
+                  onConfirm={handleBatchDelete}
+                  okText="确定"
+                  cancelText="取消"
+                  okType="danger"
+                >
+                  <Button type="default" danger icon={<DeleteOutlined />}>批量删除</Button>
+                </Popconfirm>
+                <Button type="link" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+              </Space>
+            )}
+          </Space>
+          <Space wrap>
+            <Upload {...uploadProps}>
+              <Button type="primary" icon={<UploadOutlined />}>上传文件</Button>
+            </Upload>
+            <Button type="default" onClick={() => setChunkUploadVisible(true)}>大文件上传（支持断点续传）</Button>
+          </Space>
         </Space>
-        <Upload {...uploadProps}>
-          <Button type="primary" icon={<UploadOutlined />}>
-            上传文件
-          </Button>
-        </Upload>
-        <Button type="default" onClick={() => setChunkUploadVisible(true)}>
-          大文件上传（支持断点续传）
-        </Button>
+        <Space wrap align="center">
+          <span style={{ color: 'var(--text-secondary)' }}>上传到：</span>
+          <Select
+            placeholder="选择空间（可选，有权限的空间）"
+            allowClear
+            style={{ minWidth: 200 }}
+            value={uploadSpaceId}
+            onChange={(v) => { setUploadSpaceId(v); setUploadFolderId(undefined) }}
+          >
+            {spacesData?.data?.map((space: any) => (
+              <Option key={space.id} value={space.id}>
+                {space.name} ({space.type === 'team' ? '团队' : space.type === 'department' ? '部门' : space.type === 'personal' ? '个人' : '项目'})
+              </Option>
+            ))}
+          </Select>
+          <Select
+            placeholder="选择文件夹（可选）"
+            allowClear
+            style={{ minWidth: 180 }}
+            value={uploadFolderId ?? ROOT_FOLDER_VALUE}
+            onChange={(v) => setUploadFolderId(v === ROOT_FOLDER_VALUE || v === null || v === undefined ? undefined : (v as number))}
+            disabled={!uploadSpaceId}
+            loading={!!uploadSpaceId && uploadFoldersData === undefined}
+          >
+            <Option value={ROOT_FOLDER_VALUE}>根目录</Option>
+            {uploadFoldersData?.data && renderFolderOptions(uploadFoldersData.data)}
+          </Select>
+        </Space>
       </Space>
 
       {/* 大文件上传弹窗（分块上传，适合 50MB 以上） */}
       <Modal
         title="大文件上传（分块上传，支持断点续传）"
         open={chunkUploadVisible}
-        onCancel={() => setChunkUploadVisible(false)}
+        onCancel={() => {
+          setChunkUploadVisible(false)
+          setChunkUploadSpaceId(undefined)
+          setChunkUploadFolderId(undefined)
+        }}
         footer={null}
         width={520}
       >
-        <ChunkUpload
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ['files'] })
-            setChunkUploadVisible(false)
-          }}
-        />
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Space wrap align="center">
+            <span style={{ color: 'var(--text-secondary)' }}>上传到：</span>
+            <Select
+              placeholder="选择空间（可选，有权限的空间）"
+              allowClear
+              style={{ minWidth: 200 }}
+              value={chunkUploadSpaceId}
+              onChange={(v) => { setChunkUploadSpaceId(v); setChunkUploadFolderId(undefined) }}
+            >
+              {spacesData?.data?.map((space: any) => (
+                <Option key={space.id} value={space.id}>
+                  {space.name} ({space.type === 'team' ? '团队' : space.type === 'department' ? '部门' : space.type === 'personal' ? '个人' : '项目'})
+                </Option>
+              ))}
+            </Select>
+            <Select
+              placeholder="选择文件夹（可选）"
+              allowClear
+              style={{ minWidth: 180 }}
+              value={chunkUploadFolderId ?? ROOT_FOLDER_VALUE}
+              onChange={(v) => setChunkUploadFolderId(v === ROOT_FOLDER_VALUE || v === null || v === undefined ? undefined : (v as number))}
+              disabled={!chunkUploadSpaceId}
+              loading={!!chunkUploadSpaceId && chunkUploadFoldersData === undefined}
+            >
+              <Option value={ROOT_FOLDER_VALUE}>根目录</Option>
+              {chunkUploadFoldersData?.data && renderFolderOptions(chunkUploadFoldersData.data)}
+            </Select>
+          </Space>
+          <ChunkUpload
+            messageApi={messageApi}
+            spaceId={chunkUploadSpaceId}
+            folderId={chunkUploadFolderId}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ['files'] })
+              setChunkUploadVisible(false)
+              setChunkUploadSpaceId(undefined)
+              setChunkUploadFolderId(undefined)
+            }}
+          />
+        </Space>
       </Modal>
 
       <Table
@@ -512,7 +595,7 @@ export default function Files() {
               disabled={!selectedSpaceId}
               loading={!foldersData && !!selectedSpaceId}
             >
-              <Option value={null}>根目录（不分类到文件夹）</Option>
+              <Option value={ROOT_FOLDER_VALUE}>根目录（不分类到文件夹）</Option>
               {foldersData?.data && renderFolderOptions(foldersData.data)}
             </Select>
           </Form.Item>

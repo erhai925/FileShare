@@ -310,17 +310,6 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
         // 无法预览的情况
         <div style={{ padding: '100px', textAlign: 'center' }}>
           {(() => {
-            // 调试信息
-            console.log('渲染无法预览界面:', {
-              isLocalhostEnv,
-              previewType,
-              previewError,
-              previewable,
-              previewUrl,
-              fileName,
-              fileExt: fileName?.toLowerCase().split('.').pop()
-            })
-            
             // 判断是否是 Word 文件且是 localhost 环境
             const isWordFile = fileName?.toLowerCase().endsWith('.doc') || fileName?.toLowerCase().endsWith('.docx')
             const shouldShowLocalhostError = (isLocalhostEnv && previewType === 'office') || 

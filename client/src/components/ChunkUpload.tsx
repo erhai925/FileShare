@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Upload, Progress, Button, message } from 'antd'
+import { useState, useRef, useEffect } from 'react'
+import { App, Upload, Progress, Button, message as antdMessage } from 'antd'
+import type { MessageInstance } from 'antd/es/message/interface'
 import { PauseOutlined, PlayCircleOutlined, CloseOutlined, UploadOutlined } from '@ant-design/icons'
 import api from '../services/api'
 import { useAuthStore } from '../stores/authStore'
@@ -9,26 +10,34 @@ interface ChunkUploadProps {
   folderId?: number
   spaceId?: number
   chunkSize?: number // 分块大小，默认5MB
+  /** 由父组件传入可避免 Modal 内 useApp() 取不到 context 导致无响应 */
+  messageApi?: MessageInstance
 }
 
-export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 5 * 1024 * 1024 }: ChunkUploadProps) {
+export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 5 * 1024 * 1024, messageApi }: ChunkUploadProps) {
+  let message: MessageInstance
+  try {
+    message = messageApi ?? App.useApp().message
+  } catch {
+    message = antdMessage
+  }
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [paused, setPaused] = useState(false)
   const [uploadId, setUploadId] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string>('')
-  // const uploadControllerRef = useRef<AbortController | null>(null) // 暂时未使用
+  const [statusText, setStatusText] = useState<string>('')
   const { token } = useAuthStore()
+  /** 异步 handleUpload 内用 ref 读取当前状态，避免闭包拿到旧的 uploading/paused 导致循环直接退出 */
+  const uploadingRef = useRef(false)
+  const pausedRef = useRef(false)
+  useEffect(() => { pausedRef.current = paused }, [paused])
 
-  // 将文件分割成块
-  const splitFile = (file: File, chunkSize: number): Blob[] => {
-    const chunks: Blob[] = []
-    let start = 0
-    while (start < file.size) {
-      chunks.push(file.slice(start, start + chunkSize))
-      start += chunkSize
-    }
-    return chunks
+  // 按索引取第 i 块（避免大文件一次性 slice 全部分块阻塞主线程）
+  const getChunk = (file: File, chunkSize: number, index: number): Blob => {
+    const start = index * chunkSize
+    const end = Math.min(start + chunkSize, file.size)
+    return file.slice(start, end)
   }
 
   // 初始化上传
@@ -46,14 +55,13 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
         spaceId
       })
 
-      if (response.data.success) {
-        return response.data.data.uploadId
-      } else {
-        throw new Error(response.data.message || '初始化上传失败')
+      if (response?.success && response?.data?.uploadId) {
+        return response.data.uploadId
       }
+      throw new Error(response?.message || '初始化上传失败')
     } catch (error: any) {
       console.error('初始化上传失败:', error)
-      message.error(error.response?.data?.message || '初始化上传失败')
+      message.error(error?.message || '初始化上传失败')
       throw error
     }
   }
@@ -66,14 +74,9 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
     formData.append('chunkIndex', chunkIndex.toString())
 
     try {
-      const response = await api.post('/files/upload/chunk', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          Authorization: `Bearer ${token}`
-        }
-      })
+      const response = await api.post('/files/upload/chunk', formData)
 
-      return response.data.success
+      return response?.success === true
     } catch (error: any) {
       console.error(`上传分块 ${chunkIndex} 失败:`, error)
       return false
@@ -84,8 +87,8 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
   const checkUploadStatus = async (uploadId: string) => {
     try {
       const response = await api.get(`/files/upload/status/${uploadId}`)
-      if (response.data.success) {
-        return response.data.data
+      if (response?.success && response?.data) {
+        return response.data
       }
       return null
     } catch (error) {
@@ -98,14 +101,13 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
   const completeUpload = async (uploadId: string) => {
     try {
       const response = await api.post('/files/upload/complete', { uploadId })
-      if (response.data.success) {
-        return response.data.data
-      } else {
-        throw new Error(response.data.message || '完成上传失败')
+      if (response?.success && response?.data) {
+        return response.data
       }
+      throw new Error(response?.message || '完成上传失败')
     } catch (error: any) {
       console.error('完成上传失败:', error)
-      message.error(error.response?.data?.message || '完成上传失败')
+      message.error(error?.message || '完成上传失败')
       throw error
     }
   }
@@ -121,18 +123,29 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
 
   // 处理文件上传
   const handleUpload = async (file: File) => {
+    uploadingRef.current = true
     setUploading(true)
     setPaused(false)
+    pausedRef.current = false
     setProgress(0)
     setFileName(file.name)
+    setStatusText('正在初始化上传…')
+    // 让 React 先渲染“上传中”界面，再发起请求，避免选择文件后长时间无视觉反馈
+    await new Promise(r => setTimeout(r, 0))
 
     let currentUploadId = uploadId
 
     try {
       // 如果没有uploadId，先初始化
       if (!currentUploadId) {
-        currentUploadId = await initUpload(file)
-        setUploadId(currentUploadId)
+        try {
+          currentUploadId = await initUpload(file)
+          setUploadId(currentUploadId)
+        } finally {
+          setStatusText('')
+        }
+        // init 成功后让 UI 先渲染再继续，避免“无响应”感
+        await new Promise(r => setTimeout(r, 0))
       }
 
       // 检查已上传的分块
@@ -145,23 +158,27 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
         if (onSuccess && status.fileId) {
           onSuccess(status.fileId, status.fileName)
         }
+        uploadingRef.current = false
         setUploading(false)
         return
       }
 
       const uploadedChunks = status?.uploadedChunkIndices || []
-      const chunks = splitFile(file, chunkSize)
-      const totalChunks = chunks.length
+      const totalChunks = Math.ceil(file.size / chunkSize)
 
-      // 上传未完成的分块
+      // 让 UI 先更新（进度条、文案），再开始分块上传
+      setProgress(1)
+      await new Promise(r => setTimeout(r, 0))
+
+      // 上传未完成的分块（按需取块，避免大文件一次性 slice 阻塞）
       for (let i = 0; i < totalChunks; i++) {
         // 如果已暂停，等待恢复
-        while (paused && uploading) {
+        while (pausedRef.current && uploadingRef.current) {
           await new Promise(resolve => setTimeout(resolve, 100))
         }
 
         // 如果已取消，退出
-        if (!uploading) {
+        if (!uploadingRef.current) {
           break
         }
 
@@ -176,9 +193,10 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
         if (!currentUploadId) {
           throw new Error('上传ID不存在')
         }
-        const success = await uploadChunk(currentUploadId, i, chunks[i])
+        const success = await uploadChunk(currentUploadId, i, getChunk(file, chunkSize, i))
         if (!success) {
           message.error(`分块 ${i + 1}/${totalChunks} 上传失败，请重试`)
+          uploadingRef.current = false
           setUploading(false)
           return
         }
@@ -189,10 +207,11 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
       }
 
       // 所有分块上传完成，合并文件
-      if (uploading && !paused && currentUploadId) {
-        message.loading({ content: '正在合并文件...', key: 'merging', duration: 0 })
+      if (uploadingRef.current && !pausedRef.current && currentUploadId) {
+        setProgress(100)
+        setStatusText('正在合并文件…')
         const result = await completeUpload(currentUploadId)
-        message.destroy('merging')
+        setStatusText('')
         message.success('文件上传成功')
         
         if (onSuccess) {
@@ -201,12 +220,14 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
 
         // 重置状态
         setUploadId(null)
+        uploadingRef.current = false
         setUploading(false)
         setProgress(0)
       }
     } catch (error: any) {
       console.error('上传失败:', error)
-      message.error(error.message || '上传失败')
+      message.error(error?.message || '上传失败')
+      uploadingRef.current = false
       setUploading(false)
     }
   }
@@ -225,6 +246,7 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
 
   // 取消上传
   const handleCancel = async () => {
+    uploadingRef.current = false
     if (uploadId) {
       await cancelUpload(uploadId)
     }
@@ -237,9 +259,16 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
 
   const uploadProps = {
     customRequest: async (options: any) => {
-      const { file, onSuccess: onUploadSuccess, onError } = options
+      const raw = options?.file
+      const file = (raw?.originFileObj ?? raw) as File | undefined
+      const onUploadSuccess = options?.onSuccess
+      const onError = options?.onError
+      if (!file || !(file instanceof File)) {
+        onError?.(new Error('未获取到文件'))
+        return
+      }
       try {
-        await handleUpload(file as File)
+        await handleUpload(file)
         onUploadSuccess?.('ok')
       } catch (error) {
         onError?.(error)
@@ -268,6 +297,7 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
         <div style={{ marginTop: 16 }}>
           <div style={{ marginBottom: 8 }}>
             <span>{fileName}</span>
+            {statusText && <span style={{ marginLeft: 8, color: 'var(--text-secondary)' }}>{statusText}</span>}
             <div style={{ float: 'right' }}>
               {paused ? (
                 <Button
