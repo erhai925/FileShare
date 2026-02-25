@@ -450,11 +450,11 @@ export default function Files() {
           </Space>
         </Space>
         <Space wrap align="center">
-          <span style={{ color: 'var(--text-secondary)' }}>上传到：</span>
+          <span style={{ color: 'var(--text-secondary)' }}>上传到（普通上传与大文件上传均生效）：</span>
           <Select
-            placeholder="选择空间（可选，有权限的空间）"
+            placeholder="选择空间（有权限的空间，可选）"
             allowClear
-            style={{ minWidth: 200 }}
+            style={{ minWidth: 220 }}
             value={uploadSpaceId}
             onChange={(v) => { setUploadSpaceId(v); setUploadFolderId(undefined) }}
           >
@@ -465,9 +465,9 @@ export default function Files() {
             ))}
           </Select>
           <Select
-            placeholder="选择文件夹（可选）"
+            placeholder="选择文件夹（可选，需先选空间）"
             allowClear
-            style={{ minWidth: 180 }}
+            style={{ minWidth: 200 }}
             value={uploadFolderId ?? ROOT_FOLDER_VALUE}
             onChange={(v) => setUploadFolderId(v === ROOT_FOLDER_VALUE || v === null || v === undefined ? undefined : (v as number))}
             disabled={!uploadSpaceId}
