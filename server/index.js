@@ -6,8 +6,8 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
-// 默认使用东八区北京时间
-process.env.TZ = process.env.TZ || 'Asia/Shanghai';
+// 强制东八区北京时间（覆盖 .env 中的 TZ，保证日志、定时逻辑等与展示一致；库内存 UTC，前端按东八区显示）
+process.env.TZ = 'Asia/Shanghai';
 
 const db = require('./config/database');
 const authRoutes = require('./routes/auth');

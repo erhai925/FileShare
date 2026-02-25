@@ -1,12 +1,24 @@
-/** 东八区北京时间 */
+/** 东八区北京时间（展示用） */
 const TIMEZONE = 'Asia/Shanghai'
 
 /**
- * 格式化为北京时间日期时间字符串
+ * 将接口返回的日期字符串按 UTC 解析（无 Z 或 + 时），再格式化为东八区北京时间
+ * 服务端/SQLite 存的是 UTC（YYYY-MM-DD HH:mm:ss），前端统一按东八区显示
+ */
+function parseAsUTC(date: string | Date): Date {
+  if (date instanceof Date) return date
+  const s = String(date).trim()
+  if (!s) return new Date(NaN)
+  if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s)
+  return new Date(s.replace(' ', 'T') + 'Z')
+}
+
+/**
+ * 格式化为东八区北京时间日期时间字符串
  */
 export function formatDateTime(date: string | Date | null | undefined): string {
   if (!date) return '-'
-  const d = typeof date === 'string' ? new Date(date) : date
+  const d = parseAsUTC(date as string | Date)
   if (isNaN(d.getTime())) return '-'
   return d.toLocaleString('zh-CN', { timeZone: TIMEZONE })
 }
@@ -16,7 +28,7 @@ export function formatDateTime(date: string | Date | null | undefined): string {
  */
 export function formatRelativeTime(date: string | Date): string {
   const now = new Date()
-  const target = new Date(date)
+  const target = parseAsUTC(typeof date === 'string' ? date : date)
   const diff = now.getTime() - target.getTime()
   const seconds = Math.floor(diff / 1000)
   const minutes = Math.floor(seconds / 60)

@@ -2,13 +2,14 @@
  * 操作日志：写入 operation_logs 表。
  * - IP：优先从 X-Forwarded-For、X-Real-IP 取客户端（浏览器）IP，再 fallback 到 req.ip / socket.remoteAddress。
  *   若前面有 Nginx 等反向代理，需在代理中配置转发：proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Real-IP $remote_addr;
- * - 时间：统一使用东八区北京时间（Asia/Shanghai），格式 YYYY-MM-DD HH:mm:ss，便于后台展示与过期清理比较。
+ * - 时间：与库内其他表一致，存 UTC（YYYY-MM-DD HH:mm:ss），前端按东八区展示。
  */
 const db = require('../config/database');
 
-// 东八区北京时间：格式 YYYY-MM-DD HH:mm:ss（与 SQLite 兼容，便于展示与比较）
-function getBeijingTimeString() {
-  return new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+// 存 UTC，格式 YYYY-MM-DD HH:mm:ss，与 SQLite CURRENT_TIMESTAMP 一致；前端 formatDateTime 会按东八区显示
+function getUTCTimeString() {
+  const d = new Date();
+  return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 // 规范化 IP 字符串（IPv6 映射的 IPv4 如 ::ffff:192.168.1.1 转为 192.168.1.1）
@@ -50,7 +51,7 @@ async function logOperation(userId, action, resourceType, resourceId, details, r
   try {
     const ipAddress = getClientIp(req);
     const userAgent = req?.get?.('user-agent') || 'unknown';
-    const created_at = getBeijingTimeString();
+    const created_at = getUTCTimeString();
 
     await db.run(
       `INSERT INTO operation_logs (user_id, action, resource_type, resource_id, details, ip_address, user_agent, created_at)
@@ -62,12 +63,12 @@ async function logOperation(userId, action, resourceType, resourceId, details, r
   }
 }
 
-// 清理过期日志（created_at 为东八区时间 YYYY-MM-DD HH:mm:ss， cutoff 使用同一时区与格式）
+// 清理过期日志（created_at 为 UTC YYYY-MM-DD HH:mm:ss，cutoff 用 UTC 比较）
 async function cleanOldLogs(retentionDays = 90) {
   try {
     const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
-    const cutoffStr = cutoffDate.toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - retentionDays);
+    const cutoffStr = cutoffDate.toISOString().slice(0, 19).replace('T', ' ');
 
     const result = await db.run(
       `DELETE FROM operation_logs WHERE created_at < ?`,
