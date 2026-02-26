@@ -5,7 +5,7 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 const { authenticate, checkPermission, getBatchFilePermissions } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
-const { encryptFile, decryptFile, generateHash, getEncryptionMode } = require('../utils/encryption');
+const { encryptFile, encryptFileStreaming, decryptFile, generateHash, getEncryptionMode } = require('../utils/encryption');
 const db = require('../config/database');
 
 const router = express.Router();
@@ -349,15 +349,15 @@ router.get('/download/:fileId', authenticate, async (req, res) => {
     
     // 如果文件级权限检查失败，检查空间权限
     if (!hasPermission) {
-      const file = await db.get('SELECT space_id FROM files WHERE id = ?', [fileId]);
-      if (file && file.space_id) {
-        console.log('下载文件 - 检查空间权限, space_id:', file.space_id);
-        hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
+      const fileRow = await db.get('SELECT space_id FROM files WHERE id = ?', [fileId]);
+      if (fileRow && fileRow.space_id) {
+        console.log('下载文件 - 检查空间权限, space_id:', fileRow.space_id);
+        hasPermission = await checkPermission(req.user.id, 'space', fileRow.space_id, 'read');
         console.log('下载文件 - 空间权限检查结果:', hasPermission);
         
         // 如果用户是空间所有者，也应该有权限
         if (!hasPermission) {
-          const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+          const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [fileRow.space_id]);
           if (space && space.owner_id === req.user.id) {
             hasPermission = true;
             console.log('下载文件 - 用户是空间所有者，授予权限');
@@ -709,8 +709,10 @@ router.post('/:fileId/restore', authenticate, async (req, res) => {
   }
 });
 
-// 永久删除文件（从回收站彻底删除）
+// 永久删除文件（从回收站彻底删除；大文件删除可能较慢，延长请求超时）
 router.delete('/:fileId/permanent', authenticate, async (req, res) => {
+  req.setTimeout(180000);
+  res.setTimeout(180000);
   try {
     const { fileId } = req.params;
     
@@ -724,39 +726,34 @@ router.delete('/:fileId/permanent', authenticate, async (req, res) => {
       return res.status(403).json({ success: false, message: '无删除权限' });
     }
     
-    // 删除文件记录和物理文件
+    // 删除物理文件与数据库记录（必须先删所有引用 files(id) 的表，最后再删 files，避免外键约束失败）
     try {
-      // 删除物理文件
-      await fs.unlink(file.file_path).catch(() => {
-        console.warn('物理文件不存在或已删除:', file.file_path);
+      await fs.unlink(file.file_path).catch((err) => {
+        if (err.code !== 'ENOENT') console.warn('物理文件删除警告:', file.file_path, err.message);
       });
-      
-      // 删除文件版本
+
       const versions = await db.query('SELECT * FROM file_versions WHERE file_id = ?', [fileId]);
       for (const version of versions) {
         await fs.unlink(version.file_path).catch(() => {});
       }
       await db.run('DELETE FROM file_versions WHERE file_id = ?', [fileId]);
-      
-      // 删除文件记录
-      await db.run('DELETE FROM files WHERE id = ?', [fileId]);
-      
-      // 删除相关权限
+
       await db.run('DELETE FROM permissions WHERE resource_type = ? AND resource_id = ?', ['file', fileId]);
-      
-      // 删除相关评论
       await db.run('DELETE FROM comments WHERE file_id = ?', [fileId]);
-      
-      // 删除相关分享
       await db.run('DELETE FROM external_shares WHERE resource_type = ? AND resource_id = ?', ['file', fileId]);
+      // chunk_uploads 表有 file_id 引用 files(id)，完成上传时会写入，须先清理
+      await db.run('UPDATE chunk_uploads SET file_id = NULL WHERE file_id = ?', [fileId]).catch(() => {});
+
+      await db.run('DELETE FROM files WHERE id = ?', [fileId]);
     } catch (error) {
       console.error('删除文件相关数据失败:', error);
+      return res.status(500).json({ success: false, message: '永久删除失败: ' + (error.message || '删除文件或数据库时出错') });
     }
-    
+
     await logOperation(req.user.id, 'permanent_delete_file', 'file', fileId, {
       fileName: file.original_name
     }, req);
-    
+
     res.json({ success: true, message: '文件已永久删除' });
   } catch (error) {
     console.error('永久删除文件失败:', error);
@@ -1410,14 +1407,14 @@ router.post('/upload/complete', authenticate, async (req, res) => {
       });
     }
 
-    // 合并分块
+    // 合并分块（流式写入，避免大文件 OOM）
     const storagePath = await getStoragePath();
     const chunksDir = path.join(storagePath, 'temp', 'chunks', uploadId);
     const finalFilePath = path.join(storagePath, 'temp', `merged-${uploadId}-${Date.now()}`);
 
     const fsSync = require('fs');
     const writeStream = fsSync.createWriteStream(finalFilePath);
-    
+
     // 按顺序合并所有分块
     for (let i = 0; i < upload.total_chunks; i++) {
       const chunkPath = path.join(chunksDir, `chunk-${i}`);
@@ -1432,24 +1429,19 @@ router.post('/upload/complete', authenticate, async (req, res) => {
       writeStream.on('error', reject);
     });
 
-    // 读取合并后的文件
-    const fileBuffer = await fs.readFile(finalFilePath);
-
-    // 生成文件哈希
-    const fileHash = generateHash(fileBuffer);
-
-    // 加密文件
+    // 流式加密/复制到最终路径，避免整文件读入内存导致 OOM（大视频等文件）
     const encryptionMode = getEncryptionMode();
-    const encryptedBuffer = await encryptFile(fileBuffer, encryptionMode);
-
     const isEncrypted = encryptionMode && encryptionMode !== 'none' && encryptionMode !== 'plain' && encryptionMode !== '';
     const fileExtension = isEncrypted ? '.enc' : '';
     const storageSubDir = isEncrypted ? 'encrypted' : 'files';
+    await fs.mkdir(path.join(storagePath, storageSubDir), { recursive: true });
+    const tempEncPath = path.join(storagePath, storageSubDir, `merged-enc-${uploadId}-${Date.now()}${fileExtension}`);
+
+    const fileHash = await encryptFileStreaming(finalFilePath, tempEncPath);
+
     const fileName = `${Date.now()}-${fileHash.substring(0, 16)}${fileExtension}`;
     const filePath = path.join(storagePath, storageSubDir, fileName);
-
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, encryptedBuffer);
+    await fs.rename(tempEncPath, filePath);
 
     // 分块上传的 file_name 来自客户端 JSON（已是 UTF-8），直接使用，不做 latin1 转换
     const originalFileName = upload.file_name || '';
@@ -1515,6 +1507,7 @@ router.post('/upload/complete', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('完成上传失败:', error);
+    console.error('完成上传失败 - 堆栈:', error.stack);
     res.status(500).json({ success: false, message: '完成上传失败: ' + error.message });
   }
 });

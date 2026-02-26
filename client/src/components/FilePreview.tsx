@@ -215,13 +215,12 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
 
   const handleDownload = async () => {
     if (!fileId) return
-    
+    if (!token) {
+      message.error('未登录，请先登录')
+      return
+    }
+    const hide = message.loading('正在准备下载，请稍候...', 0)
     try {
-      if (!token) {
-        message.error('未登录，请先登录')
-        return
-      }
-      
       const response = await fetch(`/api/files/download/${fileId}`, {
         headers: {
           Authorization: `Bearer ${token}`
@@ -242,9 +241,11 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       link.click()
       document.body.removeChild(link)
       window.URL.revokeObjectURL(url)
-      message.success('文件下载开始')
+      hide()
+      message.success('下载成功')
     } catch (error: any) {
       console.error('下载失败:', error)
+      hide()
       message.error(error.message || '下载失败')
     }
   }

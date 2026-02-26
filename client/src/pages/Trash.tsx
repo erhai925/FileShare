@@ -44,14 +44,14 @@ export default function Trash() {
     }
   }
 
-  // 永久删除文件
+  // 永久删除文件（大文件删除可能较慢，单独延长超时）
   const handlePermanentDelete = async (fileId: number) => {
     try {
-      await api.delete(`/files/${fileId}/permanent`)
+      await api.delete(`/files/${fileId}/permanent`, { timeout: 120000 })
       message.success('文件已永久删除')
       refetch()
     } catch (error: any) {
-      message.error(error.response?.data?.message || '删除失败')
+      message.error(error?.message || error?.response?.data?.message || '删除失败')
     }
   }
 
@@ -67,14 +67,14 @@ export default function Trash() {
     }
   }
 
-  // 批量永久删除
+  // 批量永久删除（大文件可能较慢，单独延长超时）
   const handleBatchPermanentDelete = async (fileIds: number[]) => {
     try {
-      await Promise.all(fileIds.map(id => api.delete(`/files/${id}/permanent`)))
+      await Promise.all(fileIds.map(id => api.delete(`/files/${id}/permanent`, { timeout: 120000 })))
       message.success(`已永久删除 ${fileIds.length} 个文件`)
       refetch()
     } catch (error: any) {
-      message.error('批量删除失败')
+      message.error(error?.message || '批量删除失败')
     }
   }
 

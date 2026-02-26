@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 
 // 尝试加载sm-crypto，如果失败则使用备用方案
 let sm4 = null;
@@ -263,8 +264,132 @@ function isExternalSDKAvailable() {
   return loadExternalSDK() !== null;
 }
 
+/**
+ * 流式加密/复制大文件，避免整文件读入内存导致 OOM（适用于分块上传合并）
+ * @param {string} inputPath - 输入文件路径（合并后的临时文件）
+ * @param {string} outputPath - 输出文件路径
+ * @returns {Promise<string>} 文件哈希（SHA-256）
+ */
+async function encryptFileStreaming(inputPath, outputPath) {
+  const mode = getEncryptionMode();
+
+  // 明文模式：流式复制 + 流式哈希
+  if (mode === 'none' || mode === 'plain' || mode === '') {
+    const hash = crypto.createHash('sha256');
+    const rd = fs.createReadStream(inputPath);
+    const wr = fs.createWriteStream(outputPath);
+
+    await new Promise((resolve, reject) => {
+      rd.on('data', (chunk) => {
+        hash.update(chunk);
+        if (!wr.write(chunk)) rd.pause();
+      });
+      wr.on('drain', () => rd.resume());
+      rd.on('end', () => {
+        wr.end();
+        resolve();
+      });
+      rd.on('error', reject);
+      wr.on('error', reject);
+    });
+    await new Promise((resolve, reject) => {
+      wr.on('finish', resolve);
+      wr.on('error', reject);
+    });
+    return hash.digest('hex');
+  }
+
+  // AES-256：流式加密 + 流式哈希
+  if (mode === 'aes256' || mode === 'aes-256') {
+    const key = getAES256Key();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    const hash = crypto.createHash('sha256');
+    const wr = fs.createWriteStream(outputPath);
+    wr.write(iv);
+
+    const rd = fs.createReadStream(inputPath);
+    await new Promise((resolve, reject) => {
+      rd.on('data', (chunk) => {
+        hash.update(chunk);
+        const enc = cipher.update(chunk);
+        if (enc.length) wr.write(enc);
+      });
+      rd.on('end', () => {
+        try {
+          wr.write(cipher.final());
+        } catch (e) {
+          reject(e);
+          return;
+        }
+        wr.end();
+        resolve();
+      });
+      rd.on('error', reject);
+      wr.on('error', reject);
+    });
+    await new Promise((resolve, reject) => {
+      wr.on('finish', resolve);
+      wr.on('error', reject);
+    });
+    return hash.digest('hex');
+  }
+
+  // SM4：不支持流式，大文件会 OOM，需整文件读入
+  if (mode === 'sm4') {
+    const stat = await fs.promises.stat(inputPath);
+    if (stat.size > 100 * 1024 * 1024) {
+      throw new Error(
+        'SM4 加密模式下大文件(>100MB)可能因内存不足失败。请设置 ENCRYPTION_MODE=none 或增加 NODE_OPTIONS=--max-old-space-size=4096'
+      );
+    }
+    const buffer = await fs.promises.readFile(inputPath);
+    const encrypted = encryptWithSM4(buffer);
+    await fs.promises.writeFile(outputPath, encrypted);
+    return generateHash(buffer);
+  }
+
+  // 外部 SDK：暂不支持流式
+  if (mode === 'external') {
+    const stat = await fs.promises.stat(inputPath);
+    if (stat.size > 100 * 1024 * 1024) {
+      throw new Error(
+        '外部 SDK 加密模式下大文件(>100MB)可能因内存不足失败。请设置 ENCRYPTION_MODE=none 或增加 NODE_OPTIONS=--max-old-space-size=4096'
+      );
+    }
+    const buffer = await fs.promises.readFile(inputPath);
+    const encrypted = await encryptWithExternalSDK(buffer);
+    await fs.promises.writeFile(outputPath, encrypted);
+    return generateHash(buffer);
+  }
+
+  // 未知模式：按明文处理
+  const hash = crypto.createHash('sha256');
+  const rd = fs.createReadStream(inputPath);
+  const wr = fs.createWriteStream(outputPath);
+  await new Promise((resolve, reject) => {
+    rd.on('data', (chunk) => {
+      hash.update(chunk);
+      if (!wr.write(chunk)) rd.pause();
+    });
+    wr.on('drain', () => rd.resume());
+    rd.on('end', () => {
+      wr.end();
+      resolve();
+    });
+    rd.on('error', reject);
+    wr.on('error', reject);
+  });
+  await new Promise((resolve, reject) => {
+    wr.on('finish', resolve);
+    wr.on('error', reject);
+  });
+  return hash.digest('hex');
+}
+
 module.exports = {
   encryptFile,
+  encryptFileStreaming,
   decryptFile,
   generateHash,
   generateToken,

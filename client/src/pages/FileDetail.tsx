@@ -30,13 +30,13 @@ import FilePreview from '../components/FilePreview'
 
 // 下载文件的辅助函数
 const downloadFile = async (fileId: string, fileName: string) => {
+  const token = useAuthStore.getState().token
+  if (!token) {
+    message.error('未登录，请先登录')
+    return
+  }
+  const hide = message.loading('正在准备下载，请稍候...', 0)
   try {
-    const token = useAuthStore.getState().token
-    if (!token) {
-      message.error('未登录，请先登录')
-      return
-    }
-    
     const response = await fetch(`/api/files/download/${fileId}`, {
       headers: {
         Authorization: `Bearer ${token}`
@@ -57,9 +57,11 @@ const downloadFile = async (fileId: string, fileName: string) => {
     link.click()
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
-    message.success('文件下载开始')
+    hide()
+    message.success('下载成功')
   } catch (error: any) {
     console.error('下载失败:', error)
+    hide()
     message.error(error.message || '下载失败')
   }
 }

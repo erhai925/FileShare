@@ -4,6 +4,7 @@ import { Card, Button, Space, Modal, Form, Input, Select, message, Table, Tag, P
 import { FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined, EditOutlined, DeleteOutlined, ArrowLeftOutlined, FileOutlined, FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
 import FileActions from '../components/FileActions'
 import FilePreview from '../components/FilePreview'
+import ChunkUpload from '../components/ChunkUpload'
 import { formatDateTime } from '../utils/date'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
@@ -44,6 +45,7 @@ export default function SpaceDetail() {
   const [folderFilesSelectedRowKeys, setFolderFilesSelectedRowKeys] = useState<React.Key[]>([])
   const [batchFileIds, setBatchFileIds] = useState<number[]>([])
   const [moveSubmitting, setMoveSubmitting] = useState(false)
+  const [chunkUploadVisible, setChunkUploadVisible] = useState(false)
 
   const spaceIdNum = spaceId ? parseInt(spaceId) : null
 
@@ -452,6 +454,7 @@ export default function SpaceDetail() {
   }
 
   const handleDownload = async (fileId: number, fileName: string) => {
+    const hide = message.loading('正在准备下载，请稍候...', 0)
     try {
       const res = await fetch(`/api/files/download/${fileId}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {}
@@ -464,8 +467,10 @@ export default function SpaceDetail() {
       a.download = fileName
       a.click()
       window.URL.revokeObjectURL(url)
+      hide()
       message.success('下载成功')
     } catch (e: any) {
+      hide()
       message.error(e.message || '下载失败')
     }
   }
@@ -958,6 +963,9 @@ export default function SpaceDetail() {
                           上传文件
                         </Button>
                       </Upload>
+                      <Button type="default" onClick={() => setChunkUploadVisible(true)}>
+                        大文件上传（断点续传）
+                      </Button>
                     </Space>
                   </Space>
                   
@@ -993,11 +1001,16 @@ export default function SpaceDetail() {
                 <div>
                   <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
                     <span>空间文件</span>
-                    <Upload {...spaceUploadProps}>
-                      <Button type="primary" icon={<UploadOutlined />}>
-                        上传文件
+                    <Space>
+                      <Upload {...spaceUploadProps}>
+                        <Button type="primary" icon={<UploadOutlined />}>
+                          上传文件
+                        </Button>
+                      </Upload>
+                      <Button type="default" onClick={() => setChunkUploadVisible(true)}>
+                        大文件上传（断点续传）
                       </Button>
-                    </Upload>
+                    </Space>
                   </Space>
                   <Table
                     rowSelection={{
@@ -1108,11 +1121,16 @@ export default function SpaceDetail() {
                     <div style={{ marginTop: 24 }}>
                       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
                         <span>文件夹中的文件</span>
-                        <Upload {...spaceUploadProps}>
-                          <Button type="primary" icon={<UploadOutlined />} size="small">
-                            上传文件到此文件夹
+                        <Space>
+                          <Upload {...spaceUploadProps}>
+                            <Button type="primary" icon={<UploadOutlined />} size="small">
+                              上传文件到此文件夹
+                            </Button>
+                          </Upload>
+                          <Button type="default" size="small" onClick={() => setChunkUploadVisible(true)}>
+                            大文件上传（断点续传）
                           </Button>
-                        </Upload>
+                        </Space>
                       </Space>
                       <Table
                         rowSelection={{
@@ -1483,6 +1501,28 @@ export default function SpaceDetail() {
             <Input placeholder="请输入新文件名" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 大文件上传弹窗（空间内上传到当前空间/选中文件夹） */}
+      <Modal
+        title="大文件上传（分块上传，支持断点续传）"
+        open={chunkUploadVisible}
+        onCancel={() => setChunkUploadVisible(false)}
+        footer={null}
+        width={520}
+      >
+        <ChunkUpload
+          spaceId={spaceIdNum ?? undefined}
+          folderId={selectedFolderId ?? undefined}
+          onSuccess={() => {
+            setChunkUploadVisible(false)
+            refetchSpaceDetail()
+            refetchFileTree()
+            if (selectedFolderId) refetchFolderFiles()
+            queryClient.invalidateQueries({ queryKey: ['files'] })
+            message.success('大文件上传成功')
+          }}
+        />
       </Modal>
 
       {/* 文件预览 */}

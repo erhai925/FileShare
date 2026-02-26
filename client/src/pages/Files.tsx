@@ -104,6 +104,7 @@ export default function Files() {
 
   // 下载文件（支持选择保存路径）
   const handleDownload = async (fileId: number, fileName: string) => {
+    const hide = messageApi.loading('正在准备下载，请稍候...', 0)
     try {
       const response = await fetch(`/api/files/download/${fileId}`, {
         method: 'GET',
@@ -114,7 +115,8 @@ export default function Files() {
 
       if (!response.ok) {
         const error = await response.json()
-        message.error(error.message || '下载失败')
+        hide()
+        messageApi.error(error.message || '下载失败')
         return
       }
 
@@ -141,27 +143,30 @@ export default function Files() {
           await writable.write(blob)
           await writable.close()
           
-          message.success('文件保存成功')
+          hide()
+          messageApi.success('文件保存成功')
         } catch (saveError: any) {
           // 用户取消选择，不显示错误
           if (saveError.name !== 'AbortError' && saveError.name !== 'NotAllowedError') {
             console.error('保存文件失败:', saveError)
-            // 如果 File System Access API 失败，回退到传统下载方式
+            hide()
             downloadWithFallback(blob, fileName)
+          } else {
+            hide()
           }
-          // 如果是用户取消或权限拒绝，不显示错误消息
         }
       } else {
-        // 不支持 File System Access API，使用传统下载方式
+        hide()
         downloadWithFallback(blob, fileName)
       }
     } catch (error: any) {
       console.error('下载错误:', error)
-      message.error(error.message || '下载失败')
+      hide()
+      messageApi.error(error.message || '下载失败')
     }
   }
 
-  // 传统下载方式（回退方案）
+  // 传统下载方式（回退方案，调用时 loading 已由调用方关闭）
   const downloadWithFallback = (blob: Blob, fileName: string) => {
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -169,12 +174,9 @@ export default function Files() {
     link.download = fileName
     document.body.appendChild(link)
     link.click()
-    
-    // 清理
     document.body.removeChild(link)
     window.URL.revokeObjectURL(url)
-    
-    message.success('文件下载成功（已保存到浏览器默认下载文件夹）')
+    messageApi.success('文件下载成功（已保存到浏览器默认下载文件夹）')
   }
 
   // 删除文件
