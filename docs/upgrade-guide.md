@@ -312,7 +312,7 @@ npm run server:start
   - 进入受保护页前校验 token：从 localStorage 恢复登录态后，若有 token 会先请求 `/auth/me` 校验，失败则清除登录并跳转登录页，避免通过旧 token 或缓存直接访问 `/files` 等页面。  
   - 入口页防缓存：`index.html` 增加 `Cache-Control` / `Pragma`，减少浏览器强缓存导致使用旧前端逻辑。
 
-**升级方式**：`git pull origin main` → `cd client && npm run build` → 重启服务。版本号可手动改为 `1.0.10`（见 `upgrades/version.json`），或保持 1.0.9 仅更新代码。
+**升级方式**：拉取最新代码后执行 `npm run upgrade:1.0.10` 更新版本号，再执行 `npm run client:build` 构建前端并重启服务。或手动：`git pull origin main` → `cd client && npm run build` → 编辑 `upgrades/version.json` 将 `currentVersion` 改为 `1.0.10` → 重启服务。
 
 ---
 

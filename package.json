@@ -23,6 +23,7 @@
     "upgrade:1.0.7": "node upgrades/upgrade-v1.0.6-to-v1.0.7.js",
     "upgrade:1.0.8": "node upgrades/upgrade-v1.0.7-to-v1.0.8.js",
     "upgrade:1.0.9": "node upgrades/upgrade-v1.0.8-to-v1.0.9.js",
+    "upgrade:1.0.10": "node upgrades/upgrade-v1.0.9-to-v1.0.10.js",
     "upgrade:1.0.9-from-1.0.7": "node upgrades/upgrade-v1.0.7-to-v1.0.9.js",
     "check-version": "node -e \"const v=require('./upgrades/version.json');console.log('当前版本:',v.currentVersion)\"",
     "electron:dev": "NODE_ENV=development electron electron/main.js",
