@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Modal, Spin, message, Button } from 'antd'
 import { DownloadOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { renderAsync } from 'docx-preview'
 import { useAuthStore } from '../stores/authStore'
 
 interface FilePreviewProps {
@@ -17,10 +18,13 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
   const [previewable, setPreviewable] = useState(true)
   const [, setDownloadUrl] = useState<string | null>(null)
   const [actualMimeType, setActualMimeType] = useState<string | null>(null)
-  const [previewType, setPreviewType] = useState<string | null>(null) // 'image' | 'pdf' | 'office'
+  const [previewType, setPreviewType] = useState<string | null>(null) // 'image' | 'pdf' | 'office' | 'text'
+  const [textContent, setTextContent] = useState<string | null>(null) // 文本文件内容
   const [previewError, setPreviewError] = useState<string | null>(null) // 预览错误信息
   const [isLocalhostEnv, setIsLocalhostEnv] = useState(false) // 是否是本地环境
   const [iframeLoadTimeout, setIframeLoadTimeout] = useState<NodeJS.Timeout | null>(null) // iframe 加载超时定时器
+  const docxContainerRef = useRef<HTMLDivElement>(null)
+  const [docxLoading, setDocxLoading] = useState(false)
   const { token } = useAuthStore()
 
   useEffect(() => {
@@ -38,9 +42,10 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       setActualMimeType(null)
       setPreviewType(null)
       setPreviewError(null)
+      setTextContent(null)
       setIsLocalhostEnv(false)
     }
-    
+
     // 清理函数：组件卸载或依赖变化时清理
     return () => {
       setPreviewUrl((prevUrl) => {
@@ -58,6 +63,46 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
     }
   }, [visible, fileId])
 
+  const renderDocx = useCallback(async () => {
+    if (!fileId || !token || previewType !== 'docx') return
+    try {
+      setDocxLoading(true)
+      const res = await fetch(`/api/files/preview/${fileId}?download=true`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!res.ok) throw new Error('获取文件失败')
+      const blob = await res.blob()
+      // 等待 DOM 渲染出容器
+      await new Promise(r => setTimeout(r, 200))
+      if (docxContainerRef.current) {
+        docxContainerRef.current.innerHTML = ''
+        await renderAsync(blob, docxContainerRef.current, undefined, {
+          className: 'docx-preview-wrapper',
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: true,
+          experimental: false
+        })
+      }
+    } catch (err: unknown) {
+      console.error('docx-preview 渲染失败:', err)
+      message.error('文档预览失败: ' + (err instanceof Error ? err.message : '未知错误'))
+      setPreviewable(false)
+      setPreviewError('文档预览渲染失败')
+    } finally {
+      setDocxLoading(false)
+    }
+  }, [fileId, token, previewType])
+
+  useEffect(() => {
+    if (visible && previewType === 'docx') {
+      renderDocx()
+    }
+  }, [visible, previewType, renderDocx])
+
   const loadPreview = async () => {
     if (!fileId) return
 
@@ -67,6 +112,7 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
     setPreviewError(null)
     setIsLocalhostEnv(false)
     setPreviewType(null)
+    setTextContent(null)
     setLoading(true)
     try {
       const response = await fetch(`/api/files/preview/${fileId}`, {
@@ -81,79 +127,74 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       }
 
       const contentType = response.headers.get('content-type') || ''
-      
+
       // 如果是JSON响应（可能是Office文档的预览信息）
       if (contentType.includes('application/json')) {
         const data = await response.json()
-        console.log('预览响应数据:', data)
         if (data.success && data.data) {
           // 如果是Office文档，使用在线预览服务
           if (data.data.previewType === 'office') {
-            console.log('Office 文档预览')
-            console.log('预览 URL:', data.data.previewUrl)
-            console.log('Office Viewer URL:', data.data.officeViewerUrl)
-            console.log('Google Docs Viewer URL:', data.data.googleDocsViewerUrl)
-            
-            // 检查预览 URL 是否是 localhost（在线预览服务无法访问 localhost）
-            const previewUrl = data.data.previewUrl || ''
-            const isLocalhost = previewUrl.includes('localhost') || previewUrl.includes('127.0.0.1')
-            
-            if (isLocalhost) {
-              // 本地环境，在线预览服务无法访问 localhost
-              console.warn('本地环境，在线预览服务无法访问 localhost')
-              
-              // 直接提示用户无法预览，需要下载
-              setPreviewUrl(null) // 确保 previewUrl 为 null
+            const previewUrlVal = data.data.previewUrl || ''
+            const isUnreachable = previewUrlVal.includes('localhost') ||
+              previewUrlVal.includes('127.0.0.1') ||
+              /https?:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(previewUrlVal) ||
+              /https?:\/\/172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}/.test(previewUrlVal) ||
+              /https?:\/\/192\.168\.\d{1,3}\.\d{1,3}/.test(previewUrlVal)
+
+            if (isUnreachable) {
+              // .docx 文件：使用 docx-preview 本地渲染
+              const currentFileExt = (fileName || data.data.fileName || '').toLowerCase().split('.').pop()
+              if (currentFileExt === 'docx') {
+                setPreviewType('docx')
+                setPreviewUrl('docx')
+                setPreviewable(true)
+                setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
+                setActualMimeType(data.data.mimeType || null)
+                setLoading(false)
+                return
+              }
+
+              // 其他 Office 文件（doc/xls/xlsx/ppt/pptx）：提示下载
+              setPreviewUrl(null)
               setPreviewable(false)
               setIsLocalhostEnv(true)
-              setPreviewError('本地环境无法预览 Office 文件')
+              setPreviewError('本地/内网环境无法预览此 Office 文件')
               setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
               setActualMimeType(data.data.mimeType || null)
               setPreviewType('office')
-              setLoading(false) // 确保 loading 状态被设置为 false
-              
-              // 显示警告弹框
+              setLoading(false)
+
               Modal.warning({
-                title: '无法预览 Word 文件',
+                title: '无法预览 Office 文件',
                 width: 600,
                 icon: <ExclamationCircleOutlined style={{ color: '#faad14' }} />,
                 content: (
                   <div style={{ lineHeight: 1.8 }}>
                     <p style={{ marginBottom: 12, fontSize: 14 }}>
-                      <strong>原因：</strong>Word 文件预览需要服务器是公网可访问的，当前服务器部署在本地（localhost），在线预览服务无法访问。
+                      <strong>原因：</strong>该格式暂不支持内网本地预览，仅 .docx 支持。其他 Office 格式需公网可达的在线预览服务。
                     </p>
                     <p style={{ marginBottom: 12, fontSize: 14 }}>
                       <strong>解决方案：</strong>
                     </p>
                     <ul style={{ marginLeft: 20, marginBottom: 12, fontSize: 14 }}>
-                      <li>生产环境：使用公网 IP 或域名部署服务器</li>
-                      <li>开发/测试环境：下载文件后使用本地 Office 软件打开</li>
-                      <li>内网环境：可使用内网穿透工具（如 ngrok）临时提供公网访问</li>
+                      <li>下载后使用本地 Office 软件打开</li>
+                      <li>公网部署后可直接在线预览</li>
                     </ul>
-                    <p style={{ marginTop: 16, marginBottom: 0, fontSize: 14, color: '#666' }}>
-                      点击"确定"后可以在预览窗口中下载文件。
-                    </p>
                   </div>
                 ),
-                okText: '我知道了',
-                onOk: () => {
-                  // 弹框关闭后，预览窗口会显示下载按钮
-                }
+                okText: '我知道了'
               })
-              
-              return // 提前返回，不继续执行
+
+              return
             } else {
               // 生产环境，优先使用 Microsoft Office Online Viewer
               if (data.data.officeViewerUrl) {
-                console.log('使用 Microsoft Office Online Viewer')
                 setPreviewable(true)
                 setPreviewUrl(data.data.officeViewerUrl)
                 setActualMimeType(data.data.mimeType || null)
                 setPreviewType('office')
                 setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
               } else if (data.data.googleDocsViewerUrl) {
-                // 备选：使用 Google Docs Viewer
-                console.log('使用 Google Docs Viewer')
                 setPreviewable(true)
                 setPreviewUrl(data.data.googleDocsViewerUrl)
                 setActualMimeType(data.data.mimeType || null)
@@ -167,14 +208,11 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
               }
             }
           } else {
-            // 其他不支持预览的文件类型
-            console.log('不支持预览的文件类型:', data.data)
             setPreviewable(false)
             setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
             message.info(data.data.message || '该文件类型不支持在线预览')
           }
         } else {
-          console.error('预览响应格式错误:', data)
           setPreviewable(false)
           message.error('预览失败：响应格式错误')
         }
@@ -182,13 +220,6 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
         return
       }
 
-      // 如果是图片或PDF，根据Content-Type判断
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      setPreviewUrl(url)
-      setPreviewable(true)
-      setDownloadUrl(`/api/files/download/${fileId}`)
-      
       // 从Content-Type中提取实际的mimeType
       let extractedMimeType = mimeType || null
       if (contentType) {
@@ -197,16 +228,46 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       } else {
         setActualMimeType(mimeType || null)
       }
-      
-      // 设置预览类型
+      setDownloadUrl(`/api/files/download/${fileId}`)
+
+      // 文本文件：直接获取文本内容展示（需在 blob 前处理，否则 body 已被消费）
+      const textExts = ['txt', 'md', 'markdown', 'json', 'xml', 'html', 'htm', 'css', 'js', 'log', 'csv', 'ini', 'conf', 'yml', 'yaml']
+      const extFromName = fileName?.toLowerCase().split('.').pop() || ''
+      const isTextType = extractedMimeType?.startsWith('text/') ||
+        extractedMimeType === 'application/json' ||
+        extractedMimeType === 'application/xml' ||
+        extractedMimeType === 'application/javascript' ||
+        textExts.includes(extFromName)
+      if (isTextType) {
+        const text = await response.text()
+        setPreviewType('text')
+        setTextContent(text)
+        setPreviewUrl('text')
+        setPreviewable(true)
+        setLoading(false)
+        return
+      }
+
+      // 图片或PDF：使用 blob URL
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
       if (extractedMimeType?.startsWith('image/')) {
         setPreviewType('image')
+        setPreviewUrl(url)
+        setPreviewable(true)
       } else if (extractedMimeType === 'application/pdf') {
         setPreviewType('pdf')
+        setPreviewUrl(url)
+        setPreviewable(true)
+      } else {
+        URL.revokeObjectURL(url)
+        setPreviewUrl(null)
+        setPreviewable(false)
+        message.info('该文件类型不支持在线预览，请下载后查看')
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('加载预览失败:', error)
-      message.error(error.message || '加载预览失败')
+      message.error(error instanceof Error ? error.message : '加载预览失败')
       setPreviewable(false)
     } finally {
       setLoading(false)
@@ -226,12 +287,12 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
           Authorization: `Bearer ${token}`
         }
       })
-      
+
       if (!response.ok) {
         const error = await response.json()
         throw new Error(error.message || '下载失败')
       }
-      
+
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -243,38 +304,24 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       window.URL.revokeObjectURL(url)
       hide()
       message.success('下载成功')
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('下载失败:', error)
       hide()
-      message.error(error.message || '下载失败')
+      message.error(error instanceof Error ? error.message : '下载失败')
     }
   }
 
-  // 根据实际的mimeType或文件扩展名判断文件类型
   const effectiveMimeType = actualMimeType || mimeType || ''
   const fileExt = fileName?.toLowerCase().split('.').pop() || ''
-  
-  // 判断是否为图片
-  const isImage = effectiveMimeType.startsWith('image/') || 
+
+  const isImage = effectiveMimeType.startsWith('image/') ||
     ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico'].includes(fileExt)
-  
-  // 判断是否为PDF
+
   const isPdf = effectiveMimeType === 'application/pdf' || fileExt === 'pdf'
-  
-  // 判断是否为Office文档（通过预览类型或预览URL判断）
-  const isOffice = previewType === 'office' || (previewUrl && (
-    previewUrl.includes('officeapps.live.com') || 
-    previewUrl.includes('docs.google.com') ||
-    effectiveMimeType.includes('word') ||
-    effectiveMimeType.includes('excel') ||
-    effectiveMimeType.includes('powerpoint') ||
-    effectiveMimeType.includes('spreadsheet') ||
-    effectiveMimeType.includes('presentation') ||
-    effectiveMimeType.includes('msword') ||
-    effectiveMimeType.includes('ms-excel') ||
-    effectiveMimeType.includes('ms-powerpoint') ||
-    ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(fileExt)
-  ))
+
+  const isOfficeWithViewer = previewType === 'office' && previewUrl && (
+    previewUrl.includes('officeapps.live.com') || previewUrl.includes('docs.google.com')
+  )
 
   return (
     <Modal
@@ -289,11 +336,11 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
           关闭
         </Button>
       ]}
-      width={isPdf || isOffice ? '90%' : 'auto'}
+      width={isPdf || isOfficeWithViewer || previewType === 'text' || previewType === 'docx' ? '90%' : 'auto'}
       style={{ top: 20 }}
-      styles={{ 
+      styles={{
         body: {
-          padding: 0, 
+          padding: 0,
           minHeight: '60vh',
           display: 'flex',
           justifyContent: 'center',
@@ -308,29 +355,25 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
           <div style={{ marginTop: 16 }}>加载中...</div>
         </div>
       ) : !previewable || !previewUrl ? (
-        // 无法预览的情况
         <div style={{ padding: '100px', textAlign: 'center' }}>
           {(() => {
-            // 判断是否是 Word 文件且是 localhost 环境
             const isWordFile = fileName?.toLowerCase().endsWith('.doc') || fileName?.toLowerCase().endsWith('.docx')
-            const shouldShowLocalhostError = (isLocalhostEnv && previewType === 'office') || 
-                                            (isLocalhostEnv && isWordFile) ||
-                                            (previewType === 'office' && previewError && previewError.includes('本地环境'))
-            
+            const shouldShowLocalhostError = (isLocalhostEnv && previewType === 'office') ||
+              (isLocalhostEnv && isWordFile) ||
+              (previewType === 'office' && previewError?.includes('本地'))
+
             if (shouldShowLocalhostError) {
               return (
                 <>
                   <div style={{ marginBottom: 24, color: '#ff4d4f', fontSize: 16, fontWeight: 'bold' }}>
-                    ⚠️ 本地环境无法预览 Office 文件
+                    ⚠️ 本地/内网环境无法预览 Office 文件
                   </div>
                   <div style={{ marginBottom: 16, color: '#666', lineHeight: 1.8 }}>
-                    <p style={{ marginBottom: 8 }}>Word 文件预览需要服务器是公网可访问的。</p>
-                    <p style={{ marginBottom: 8 }}><strong>当前环境：</strong>服务器部署在本地（localhost）</p>
+                    <p style={{ marginBottom: 8 }}>该格式暂不支持内网本地预览（仅 .docx 支持），请下载后使用 Office 打开。</p>
                     <p style={{ marginBottom: 8 }}><strong>解决方案：</strong></p>
                     <ul style={{ textAlign: 'left', display: 'inline-block', marginTop: 8, marginBottom: 0 }}>
-                      <li>生产环境：使用公网 IP 或域名部署服务器</li>
-                      <li>开发/测试环境：下载文件后使用本地 Office 软件打开</li>
-                      <li>内网环境：可使用内网穿透工具（如 ngrok）临时提供公网访问</li>
+                      <li>公网部署：使用公网 IP 或域名</li>
+                      <li>内网/本地：下载后使用 Office 打开，或使用 ngrok 等内网穿透</li>
                     </ul>
                   </div>
                 </>
@@ -356,9 +399,46 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
             下载文件
           </Button>
         </div>
-      ) : previewable && previewUrl ? (
+      ) : previewable && (previewUrl || textContent) ? (
         <div style={{ width: '100%', height: '100%', overflow: 'auto' }}>
-          {isImage ? (
+          {previewType === 'docx' ? (
+            <div style={{ width: '100%', minHeight: '60vh', maxHeight: '80vh', overflow: 'auto', position: 'relative' }}>
+              {docxLoading && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.8)', zIndex: 10 }}>
+                  <Spin size="large" tip="正在渲染文档..." />
+                </div>
+              )}
+              <div
+                ref={docxContainerRef}
+                style={{
+                  width: '100%',
+                  minHeight: '60vh',
+                  backgroundColor: '#fff',
+                  padding: 0
+                }}
+              />
+            </div>
+          ) : previewType === 'text' && textContent != null ? (
+            <pre
+              style={{
+                margin: 0,
+                padding: 24,
+                textAlign: 'left',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, Monaco, Consolas, monospace',
+                fontSize: 14,
+                lineHeight: 1.6,
+                maxHeight: '80vh',
+                overflow: 'auto',
+                backgroundColor: '#fff',
+                border: '1px solid #f0f0f0',
+                borderRadius: 4
+              }}
+            >
+              {textContent}
+            </pre>
+          ) : isImage ? (
             <img
               src={previewUrl}
               alt={fileName}
@@ -369,7 +449,7 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
                 margin: '0 auto'
               }}
             />
-          ) : isPdf || isOffice ? (
+          ) : isPdf || isOfficeWithViewer ? (
             <div style={{ width: '100%', height: '100%', position: 'relative' }}>
               <iframe
                 src={previewUrl}
@@ -380,8 +460,7 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
                 }}
                 title={fileName}
                 allow="fullscreen"
-                onError={(e) => {
-                  console.error('iframe 加载失败:', e)
+                onError={() => {
                   if (iframeLoadTimeout) {
                     clearTimeout(iframeLoadTimeout)
                     setIframeLoadTimeout(null)
@@ -391,34 +470,24 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
                   message.error('预览加载失败，请尝试下载文件', 5)
                 }}
                 onLoad={() => {
-                  console.log('iframe onLoad 事件触发')
-                  // 设置超时检测，如果 5 秒后 iframe 仍然无法正常显示，认为加载失败
                   const timeout = setTimeout(() => {
-                    const iframe = document.querySelector('iframe[title="' + fileName + '"]') as HTMLIFrameElement
+                    const iframe = document.querySelector(`iframe[title="${fileName}"]`) as HTMLIFrameElement
                     if (iframe) {
                       try {
-                        // 尝试访问 iframe 内容
                         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-                        if (!iframeDoc) {
-                          // 无法访问文档，可能是跨域或加载失败
-                          console.warn('无法访问 iframe 内容，可能加载失败')
-                          // 不设置错误，因为可能是跨域限制导致的正常情况
-                        } else {
-                          // 检查是否有错误信息
-                          const bodyText = iframeDoc.body?.innerText || iframeDoc.body?.textContent || ''
-                          if (bodyText.includes('无法访问') || 
-                              bodyText.includes('无法加载') || 
+                        if (iframeDoc?.body) {
+                          const bodyText = iframeDoc.body.innerText || iframeDoc.body.textContent || ''
+                          if (bodyText.includes('无法访问') ||
+                              bodyText.includes('无法加载') ||
                               bodyText.includes('Access Denied') ||
-                              bodyText.includes('This site can\'t be reached')) {
+                              bodyText.includes("This site can't be reached")) {
                             setPreviewable(false)
                             setPreviewError('在线预览服务无法访问此文件，请下载文件查看')
                             message.warning('预览加载失败，请下载文件查看', 5)
                           }
                         }
-                      } catch (e) {
-                        // 跨域限制，无法检查内容
-                        console.log('无法检查 iframe 内容（跨域限制）')
-                        // 不设置错误，因为跨域限制是正常情况
+                      } catch {
+                        // 跨域限制
                       }
                     }
                     setIframeLoadTimeout(null)
@@ -440,4 +509,3 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
     </Modal>
   )
 }
-

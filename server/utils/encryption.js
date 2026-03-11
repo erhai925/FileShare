@@ -1,5 +1,9 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const { pipeline: pipelineCb } = require('stream');
+const { promisify } = require('util');
+const { Transform } = require('stream');
+const pipeline = promisify(pipelineCb);
 
 // 尝试加载sm-crypto，如果失败则使用备用方案
 let sm4 = null;
@@ -273,29 +277,18 @@ function isExternalSDKAvailable() {
 async function encryptFileStreaming(inputPath, outputPath) {
   const mode = getEncryptionMode();
 
-  // 明文模式：流式复制 + 流式哈希
+  // 明文模式：流式复制 + 流式哈希（使用 pipeline 更稳健）
   if (mode === 'none' || mode === 'plain' || mode === '') {
     const hash = crypto.createHash('sha256');
     const rd = fs.createReadStream(inputPath);
-    const wr = fs.createWriteStream(outputPath);
-
-    await new Promise((resolve, reject) => {
-      rd.on('data', (chunk) => {
+    const passThrough = new Transform({
+      transform(chunk, enc, cb) {
         hash.update(chunk);
-        if (!wr.write(chunk)) rd.pause();
-      });
-      wr.on('drain', () => rd.resume());
-      rd.on('end', () => {
-        wr.end();
-        resolve();
-      });
-      rd.on('error', reject);
-      wr.on('error', reject);
+        cb(null, chunk);
+      }
     });
-    await new Promise((resolve, reject) => {
-      wr.on('finish', resolve);
-      wr.on('error', reject);
-    });
+    const wr = fs.createWriteStream(outputPath);
+    await pipeline(rd, passThrough, wr);
     return hash.digest('hex');
   }
 

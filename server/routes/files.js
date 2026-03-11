@@ -11,6 +11,9 @@ const db = require('../config/database');
 const router = express.Router();
 const { getStoragePath } = require('../utils/storage');
 
+// 已与参考 files.js（Downloads）融合：上传/下载/列表/回收站/移动/重命名/分块上传/预览/preview-public 等逻辑一致；
+// 本项目额外保留：setAttachmentDisposition、resolveFilePath、getCandidateStorageRoots、authenticateOrDownloadToken、POST /download-token、download_count 更新
+
 /** 设置下载文件名响应头（兼容中文等，使用 RFC 5987 filename*） */
 function setAttachmentDisposition(res, originalName) {
   const safeAscii = (originalName || 'download').replace(/[^\x20-\x7E]/g, '_') || 'download';

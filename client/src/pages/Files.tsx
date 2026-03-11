@@ -303,14 +303,30 @@ export default function Files() {
   const uploadProps: UploadProps = {
     name: 'file',
     multiple: true,
-    action: '/api/files/upload',
-    headers: {
-      Authorization: `Bearer ${token}`
+    customRequest: async ({ file, onSuccess, onError }) => {
+      const formData = new FormData()
+      formData.append('file', file as File)
+      formData.append('spaceId', String(uploadSpaceId ?? ''))
+      formData.append('folderId', String(uploadFolderId ?? ''))
+      try {
+        const res = await api.post('/files/upload', formData, { timeout: 300000 })
+        const data = res as any
+        if (data?.success) {
+          onSuccess?.(data)
+        } else {
+          onError?.(new Error(data?.message || '上传失败'))
+        }
+      } catch (err: any) {
+        const msg = typeof err === 'string' ? err : (err?.message || err?.response?.data?.message || '上传失败')
+        const hint = err?.hint || err?.response?.data?.hint
+        const detail = err?.error || err?.response?.data?.error
+        const detailStr = typeof detail === 'object' ? detail?.message || JSON.stringify(detail) : String(detail)
+        let fullMsg = msg
+        if (hint) fullMsg += `；${hint}`
+        if (detailStr) fullMsg += `（${detailStr}）`
+        onError?.(new Error(fullMsg))
+      }
     },
-    data: () => ({
-      spaceId: uploadSpaceId ?? '',
-      folderId: uploadFolderId ?? ''
-    }),
     onChange(info) {
       if (info.file.status === 'done') {
         const response = info.file.response
@@ -321,11 +337,12 @@ export default function Files() {
           message.error(response?.message || `${info.file.name} 上传失败`)
         }
       } else if (info.file.status === 'error') {
-        const res = info.file.response
-        const msg = res?.message || res?.hint || (info.file.error as any)?.message || `${info.file.name} 上传失败`
-        const alreadyHint = res?.hint || (typeof res?.message === 'string' && res.message.includes('大文件'))
-        message.error(alreadyHint ? msg : `${msg}；若文件较大请使用「大文件上传」`)
-        console.error('上传错误:', info.file.response || info.file.error)
+        const error = info.file.error
+        const errorMsg = error?.message || `${info.file.name} 上传失败`
+        message.error(errorMsg)
+        if (info.file.size && info.file.size > 50 * 1024 * 1024) {
+          message.info('大文件建议使用「大文件上传（断点续传）」')
+        }
       }
     },
     beforeUpload: (file) => {

@@ -33,7 +33,7 @@ export default function SpaceDetail() {
   const [settingsForm] = Form.useForm()
   const [moveFileForm] = Form.useForm()
   const queryClient = useQueryClient()
-  const { token, user } = useAuthStore()
+  const { token } = useAuthStore()
   const [previewVisible, setPreviewVisible] = useState(false)
   const [previewFileId, setPreviewFileId] = useState<number | null>(null)
   const [renameFileModalVisible, setRenameFileModalVisible] = useState(false)
@@ -243,17 +243,35 @@ export default function SpaceDetail() {
     }
   })
 
-  // 空间内文件上传配置
+  // 空间内文件上传配置（customRequest 使用 axios 支持长超时与正确解析错误）
   const spaceUploadProps: UploadProps = {
     name: 'file',
     multiple: true,
-    action: '/api/files/upload',
-    headers: {
-      Authorization: `Bearer ${token}`
-    },
-    data: {
-      spaceId: spaceIdNum,
-      folderId: selectedFolderId || undefined
+    customRequest: async ({ file, onSuccess, onError }) => {
+      const formData = new FormData()
+      formData.append('file', file as File)
+      formData.append('spaceId', String(spaceIdNum ?? ''))
+      formData.append('folderId', String(selectedFolderId ?? ''))
+      try {
+        const res = await api.post('/files/upload', formData, {
+          timeout: 300000
+        })
+        const data = res as any
+        if (data?.success) {
+          onSuccess?.(data)
+        } else {
+          onError?.(new Error(data?.message || '上传失败'))
+        }
+      } catch (err: any) {
+        const msg = typeof err === 'string' ? err : (err?.message || err?.response?.data?.message || '上传失败')
+        const hint = err?.hint || err?.response?.data?.hint
+        const detail = err?.error || err?.response?.data?.error
+        const detailStr = typeof detail === 'object' ? detail?.message || JSON.stringify(detail) : String(detail)
+        let fullMsg = msg
+        if (hint) fullMsg += `；${hint}`
+        if (detailStr) fullMsg += `（${detailStr}）`
+        onError?.(new Error(fullMsg))
+      }
     },
     onChange(info) {
       if (info.file.status === 'done') {
@@ -270,9 +288,12 @@ export default function SpaceDetail() {
           message.error(response?.message || `${info.file.name} 上传失败`)
         }
       } else if (info.file.status === 'error') {
-        const error = info.file.error || info.file.response
-        const errorMsg = error?.message || error?.error?.message || `${info.file.name} 上传失败`
+        const error = info.file.error
+        const errorMsg = error?.message || `${info.file.name} 上传失败`
         message.error(errorMsg)
+        if (info.file.size && info.file.size > 50 * 1024 * 1024) {
+          message.info('大文件建议使用「大文件上传（断点续传）」')
+        }
       }
     },
     beforeUpload: (file) => {
@@ -1204,13 +1225,13 @@ export default function SpaceDetail() {
                             )
                           }
                         ]}
-                        dataSource={folderFilesData?.data ?? []}
+                        dataSource={(folderFilesData as { data?: any[] } | undefined)?.data ?? []}
                         rowKey="id"
                         size="small"
                         pagination={{
                           current: folderFilePage,
                           pageSize: folderFilePageSize,
-                          total: folderFilesData?.total ?? 0,
+                          total: (folderFilesData as { total?: number } | undefined)?.total ?? 0,
                           showSizeChanger: true,
                           pageSizeOptions: [10, 50, 100],
                           showTotal: (t) => `共 ${t} 条`,
