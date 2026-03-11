@@ -40,6 +40,7 @@ export default function Files() {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [debouncedKeyword, setDebouncedKeyword] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [moveModalVisible, setMoveModalVisible] = useState(false)
   const [selectedFile, setSelectedFile] = useState<any>(null)
   const [moveForm] = Form.useForm()
@@ -96,9 +97,9 @@ export default function Files() {
   })
 
   const { data, isLoading } = useQuery({
-    queryKey: ['files', currentPage, debouncedKeyword],
+    queryKey: ['files', currentPage, pageSize, debouncedKeyword],
     queryFn: () => api.get('/files/list', {
-      params: { page: currentPage, pageSize: 20, keyword: debouncedKeyword || undefined }
+      params: { page: currentPage, pageSize, keyword: debouncedKeyword || undefined }
     })
   })
 
@@ -544,9 +545,19 @@ export default function Files() {
         rowKey="id"
         pagination={{
           current: currentPage,
-          pageSize: 20,
+          pageSize,
           total: data?.data?.total || 0,
-          onChange: (page) => setCurrentPage(page)
+          showTotal: (total) => `共 ${total} 条`,
+          showSizeChanger: true,
+          pageSizeOptions: ['20', '50', '100'],
+          onChange: (page, size) => {
+            setCurrentPage(page)
+            if (size != null) setPageSize(size)
+          },
+          onShowSizeChange: (_, size) => {
+            setCurrentPage(1)
+            setPageSize(size)
+          }
         }}
       />
 

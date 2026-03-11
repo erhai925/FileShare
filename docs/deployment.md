@@ -76,6 +76,10 @@ PORT=3000
 # 配置存储路径
 STORAGE_PATH=/var/fileshare/storage
 
+# 可选：历史文件存储根（升级后若文件迁移到其他目录，可设多个候选根，逗号分隔）
+# 下载时会在此列表 + 当前存储路径 + 项目内 storage 下按文件名查找
+# LEGACY_STORAGE_PATHS=/old/path1,/backup/storage
+
 # 时区（默认东八区北京时间）
 TZ=Asia/Shanghai
 

@@ -131,3 +131,12 @@ h1, h2, h3, h4, h5, h6,
 .page-content .ant-tabs-tab:hover {
   color: var(--color-accent-hover);
 }
+
+/* 列表/表格区域：高度随窗口变化，超出时局部滚动 */
+.scroll-table-wrap {
+  max-height: min(600px, calc(100vh - 320px));
+  min-height: 160px;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}

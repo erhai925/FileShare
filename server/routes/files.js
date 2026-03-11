@@ -5,11 +5,18 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 const { authenticate, checkPermission, getBatchFilePermissions } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
-const { encryptFile, encryptFileStreaming, decryptFile, generateHash, getEncryptionMode } = require('../utils/encryption');
+const { encryptFile, encryptFileStreaming, decryptFile, generateHash, getEncryptionMode, generateToken } = require('../utils/encryption');
 const db = require('../config/database');
 
 const router = express.Router();
 const { getStoragePath } = require('../utils/storage');
+
+/** 设置下载文件名响应头（兼容中文等，使用 RFC 5987 filename*） */
+function setAttachmentDisposition(res, originalName) {
+  const safeAscii = (originalName || 'download').replace(/[^\x20-\x7E]/g, '_') || 'download';
+  const encoded = encodeURIComponent(originalName || 'download');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encoded}`);
+}
 
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 10737418240; // 10GB
 // 单次表单上传建议上限，超过则引导使用分块上传，避免大文件读入内存导致宕机
@@ -18,6 +25,104 @@ const SINGLE_UPLOAD_MAX = parseInt(process.env.SINGLE_UPLOAD_MAX) || 50 * 1024 *
 // 获取存储路径的辅助函数（异步）
 async function getStoragePathAsync() {
   return await getStoragePath();
+}
+
+/** 候选存储根（当前配置 + 项目 storage + 可配置 fallback） */
+async function getCandidateStorageRoots() {
+  const roots = [];
+  roots.push(path.resolve(await getStoragePath()));
+  const cwdStorage = path.resolve(process.cwd(), 'storage');
+  if (!roots.includes(cwdStorage)) roots.push(cwdStorage);
+  const serverRel = path.resolve(path.join(__dirname, '..', '..', 'storage'));
+  if (!roots.includes(serverRel)) roots.push(serverRel);
+  if (process.env.LEGACY_STORAGE_PATHS) {
+    process.env.LEGACY_STORAGE_PATHS.split(',').map(p => path.resolve(p.trim())).filter(Boolean).forEach(r => {
+      if (!roots.includes(r)) roots.push(r);
+    });
+  }
+  try {
+    const row = await db.get('SELECT config_value FROM system_config WHERE config_key = ?', ['storage_path_fallbacks']);
+    if (row && row.config_value) {
+      const arr = JSON.parse(row.config_value);
+      if (Array.isArray(arr)) arr.forEach(p => { const r = path.resolve(p); if (r && !roots.includes(r)) roots.push(r); });
+    }
+  } catch (e) {}
+  return roots;
+}
+
+/**
+ * 解析文件实际路径：若数据库中路径不存在（相对路径、存储根路径变更等），
+ * 则尝试多种回退：绝对路径、当前存储根+相对路径、存储根+files/encrypted+文件名等
+ */
+async function resolveFilePath(file) {
+  const raw = file.file_path;
+  if (!raw || typeof raw !== 'string') return null;
+  const stored = path.normalize(raw.trim()).replace(/^\.\//, '');
+  const name = path.basename(stored);
+  const roots = await getCandidateStorageRoots();
+  const attempts = [
+    stored,
+    path.resolve(stored),
+    path.join(roots[0], stored),
+    path.join(roots[0], 'files', name),
+    path.join(roots[0], 'encrypted', name),
+    path.join(process.cwd(), stored),
+    path.join(process.cwd(), 'storage', 'files', name),
+    path.join(process.cwd(), 'storage', 'encrypted', name)
+  ];
+  for (let i = 1; i < roots.length; i++) {
+    attempts.push(path.join(roots[i], 'files', name), path.join(roots[i], 'encrypted', name));
+  }
+  const seen = new Set();
+  for (const p of attempts) {
+    const canon = path.resolve(p);
+    if (seen.has(canon)) continue;
+    seen.add(canon);
+    try {
+      await fs.access(canon);
+      return canon;
+    } catch (e) {
+      // 继续尝试下一项
+    }
+  }
+  const dir = path.dirname(stored);
+  const base = path.basename(dir);
+  if (base && name && base !== '.' && base !== '..') {
+    for (const root of roots) {
+      for (const sub of ['', 'files', 'encrypted']) {
+        const fallback = sub ? path.join(root, sub, base, name) : path.join(root, base, name);
+        const canon = path.resolve(fallback);
+        if (seen.has(canon)) continue;
+        seen.add(canon);
+        try {
+          await fs.access(canon);
+          return fallback;
+        } catch (e2) {}
+      }
+    }
+  }
+  // 按文件名在候选根的 files/encrypted 下搜索（升级后文件可能迁移到其他根）
+  for (const root of roots) {
+    for (const sub of ['files', 'encrypted']) {
+      const dirPath = path.join(root, sub);
+      try {
+        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        for (const ent of entries) {
+          if (ent.isFile() && ent.name === name) {
+            const full = path.join(dirPath, ent.name);
+            const canon = path.resolve(full);
+            if (seen.has(canon)) continue;
+            try {
+              await fs.access(canon);
+              return canon;
+            } catch (e3) {}
+          }
+        }
+      } catch (e4) {}
+    }
+  }
+  console.warn('resolveFilePath 未找到文件，fileId=', file.id, 'stored=', raw, 'roots=', roots, 'tried=', Array.from(seen).slice(0, 20));
+  return null;
 }
 
 // 配置文件上传
@@ -331,8 +436,68 @@ router.post('/upload', authenticate, (req, res, next) => {
   }
 });
 
+// 下载：支持 Bearer 认证或 URL 上的临时 token（复制链接打开用）
+async function authenticateOrDownloadToken(req, res, next) {
+  const token = req.query.token;
+  if (token && typeof token === 'string') {
+    if (!global.downloadTokens) {
+      return res.status(401).json({ success: false, message: '下载链接无效或已过期' });
+    }
+    const info = global.downloadTokens.get(token);
+    if (!info || Date.now() > info.expiresAt) {
+      if (info) global.downloadTokens.delete(token);
+      return res.status(401).json({ success: false, message: '下载链接无效或已过期' });
+    }
+    if (String(info.fileId) !== String(req.params.fileId)) {
+      return res.status(403).json({ success: false, message: '链接与文件不匹配' });
+    }
+    const user = await db.get('SELECT id, username, email, role, real_name FROM users WHERE id = ? AND status = ?', [info.userId, 'active']);
+    if (!user) {
+      global.downloadTokens.delete(token);
+      return res.status(401).json({ success: false, message: '下载链接已失效' });
+    }
+    req.user = { id: user.id, username: user.username, email: user.email, role: user.role, realName: user.real_name };
+    return next();
+  }
+  return authenticate(req, res, next);
+}
+
+// 生成临时下载链接 token（供复制链接后在新标签页打开）
+router.post('/download-token', authenticate, async (req, res) => {
+  try {
+    const { fileId } = req.body;
+    if (!fileId) {
+      return res.status(400).json({ success: false, message: '缺少 fileId' });
+    }
+    const file = await db.get('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL', [fileId]);
+    if (!file) {
+      return res.status(404).json({ success: false, message: '文件不存在' });
+    }
+    let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
+    if (!hasPermission && file.space_id) {
+      hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
+      if (!hasPermission) {
+        const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+        if (space && space.owner_id === req.user.id) hasPermission = true;
+      }
+    }
+    if (!hasPermission) {
+      return res.status(403).json({ success: false, message: '无访问权限' });
+    }
+    const raw = generateToken(24);
+    const expiresAt = Date.now() + 60 * 60 * 1000; // 1 小时
+    if (!global.downloadTokens) global.downloadTokens = new Map();
+    global.downloadTokens.set(raw, { fileId: Number(fileId), userId: req.user.id, expiresAt });
+    setTimeout(() => global.downloadTokens && global.downloadTokens.delete(raw), 60 * 60 * 1000);
+    res.json({ success: true, data: { token: raw, expiresIn: 3600 } });
+  } catch (err) {
+    console.error('生成下载 token 失败:', err);
+    res.status(500).json({ success: false, message: '生成下载链接失败' });
+  }
+});
+
 // 下载文件
-router.get('/download/:fileId', authenticate, async (req, res) => {
+router.get('/download/:fileId', authenticateOrDownloadToken, async (req, res) => {
   try {
     const { fileId } = req.params;
     
@@ -375,19 +540,17 @@ router.get('/download/:fileId', authenticate, async (req, res) => {
     // 下载权限检查：默认允许下载
     // 如果需要实现"禁止下载"功能，可以在权限表中设置特殊标记
     // 目前简化处理：有read权限就可以下载
-    
-    // 检查文件是否存在
-    try {
-      await fs.access(file.file_path);
-    } catch (error) {
+
+    const resolvedPath = await resolveFilePath(file);
+    if (!resolvedPath) {
       console.error('文件不存在:', file.file_path);
       return res.status(404).json({ success: false, message: '文件不存在或已被删除' });
     }
-    
+
     // 读取文件
     let fileBuffer;
     try {
-      fileBuffer = await fs.readFile(file.file_path);
+      fileBuffer = await fs.readFile(resolvedPath);
     } catch (error) {
       console.error('读取文件失败:', error);
       return res.status(500).json({ success: false, message: '读取文件失败: ' + error.message });
@@ -413,10 +576,12 @@ router.get('/download/:fileId', authenticate, async (req, res) => {
     await logOperation(req.user.id, 'download_file', 'file', fileId, {
       fileName: file.original_name
     }, req);
-    
-    // 设置响应头
+
+    await db.run('UPDATE files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?', [fileId]);
+
+    // 设置响应头（使用 filename* 确保浏览器正确保存中文等文件名）
     res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.original_name)}"`);
+    setAttachmentDisposition(res, file.original_name);
     res.setHeader('Content-Length', decryptedBuffer.length);
     
     res.send(decryptedBuffer);
@@ -1096,6 +1261,46 @@ router.get('/top-uploaders', authenticate, async (req, res) => {
   }
 });
 
+// 下载次数最多的前5个文件（用于工作台-文件下载排行榜）
+router.get('/top-downloads', authenticate, async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT f.id, f.original_name, COALESCE(f.download_count, 0) as download_count
+       FROM files f
+       WHERE f.deleted_at IS NULL AND COALESCE(f.download_count, 0) > 0
+       ORDER BY f.download_count DESC
+       LIMIT 5`
+    );
+    res.json({ success: true, data: { list: rows } });
+  } catch (error) {
+    console.error('获取下载排行榜失败:', error);
+    res.status(500).json({ success: false, message: '获取下载排行榜失败' });
+  }
+});
+
+// 下载操作最多的前5名用户（排除 admin，用于工作台-用户下载排行榜）
+router.get('/top-downloaders', authenticate, async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT l.user_id, u.real_name, u.username, COUNT(*) as download_count
+       FROM operation_logs l
+       JOIN users u ON l.user_id = u.id
+       WHERE l.action = 'download_file' AND u.username != 'admin'
+       GROUP BY l.user_id
+       ORDER BY download_count DESC
+       LIMIT 5`
+    );
+    const list = rows.map(r => ({
+      realName: r.real_name || r.username,
+      downloadCount: r.download_count
+    }));
+    res.json({ success: true, data: { list } });
+  } catch (error) {
+    console.error('获取用户下载排行榜失败:', error);
+    res.status(500).json({ success: false, message: '获取用户下载排行榜失败' });
+  }
+});
+
 // 获取文件信息
 router.get('/:fileId', authenticate, async (req, res) => {
   try {
@@ -1593,31 +1798,26 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     
-    // 检查文件是否存在
-    try {
-      await fs.access(file.file_path);
-    } catch (error) {
+    const resolvedPath = await resolveFilePath(file);
+    if (!resolvedPath) {
       console.error('文件不存在:', file.file_path);
       return res.status(404).json({ success: false, message: '文件不存在或已被删除' });
     }
-    
-    // 读取文件
+
     let fileBuffer;
     try {
-      fileBuffer = await fs.readFile(file.file_path);
+      fileBuffer = await fs.readFile(resolvedPath);
     } catch (error) {
       console.error('读取文件失败:', error);
       return res.status(500).json({ success: false, message: '读取文件失败: ' + error.message });
     }
-    
-    // 解密文件
+
     let decryptedBuffer;
     try {
       decryptedBuffer = decryptFile(fileBuffer);
       if (decryptedBuffer instanceof Promise) {
         decryptedBuffer = await decryptedBuffer;
       }
-      
       if (!Buffer.isBuffer(decryptedBuffer)) {
         decryptedBuffer = Buffer.from(decryptedBuffer);
       }
@@ -1625,11 +1825,8 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
       console.error('文件解密失败:', error);
       return res.status(500).json({ success: false, message: '文件解密失败: ' + error.message });
     }
-    
-    // 确定文件类型
+
     let mimeType = file.mime_type || 'application/octet-stream';
-    
-    // 如果mimeType为空或无效，尝试根据文件扩展名推断
     if (!file.mime_type || file.mime_type === 'application/octet-stream') {
       const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
       const mimeTypes = {
@@ -1674,7 +1871,7 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     // 如果是下载请求，直接返回文件
     if (download === 'true') {
       res.setHeader('Content-Type', mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.original_name)}"`);
+      setAttachmentDisposition(res, file.original_name);
       res.setHeader('Content-Length', decryptedBuffer.length);
       res.send(decryptedBuffer);
       return;
@@ -1788,31 +1985,26 @@ router.get('/preview-public/:token', async (req, res) => {
       return res.status(404).json({ success: false, message: '文件不存在' });
     }
     
-    // 检查文件是否存在
-    try {
-      await fs.access(file.file_path);
-    } catch (error) {
+    const resolvedPath = await resolveFilePath(file);
+    if (!resolvedPath) {
       console.error('文件不存在:', file.file_path);
       return res.status(404).json({ success: false, message: '文件不存在或已被删除' });
     }
-    
-    // 读取文件
+
     let fileBuffer;
     try {
-      fileBuffer = await fs.readFile(file.file_path);
+      fileBuffer = await fs.readFile(resolvedPath);
     } catch (error) {
       console.error('读取文件失败:', error);
       return res.status(500).json({ success: false, message: '读取文件失败: ' + error.message });
     }
-    
-    // 解密文件
+
     let decryptedBuffer;
     try {
       decryptedBuffer = decryptFile(fileBuffer);
       if (decryptedBuffer instanceof Promise) {
         decryptedBuffer = await decryptedBuffer;
       }
-      
       if (!Buffer.isBuffer(decryptedBuffer)) {
         decryptedBuffer = Buffer.from(decryptedBuffer);
       }
@@ -1820,11 +2012,8 @@ router.get('/preview-public/:token', async (req, res) => {
       console.error('文件解密失败:', error);
       return res.status(500).json({ success: false, message: '文件解密失败: ' + error.message });
     }
-    
-    // 确定文件类型
+
     let mimeType = file.mime_type || 'application/octet-stream';
-    
-    // 如果mimeType为空或无效，尝试根据文件扩展名推断
     if (!file.mime_type || file.mime_type === 'application/octet-stream') {
       const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
       const mimeTypes = {

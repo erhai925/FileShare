@@ -1,6 +1,16 @@
-/* 主布局：深色顶栏 + 侧栏，与设计令牌一致 */
+/* 主布局：顶栏固定高度，下方为侧栏+内容区；内容区为局部滚动区域 */
 .app-layout {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-layout > .ant-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* 明确高度，首屏即可正确出现滚动条 */
+  height: calc(100vh - 56px);
 }
 
 .app-header {
@@ -77,15 +87,21 @@
   color: #94a3b8 !important;
 }
 
-/* 内容区 */
-.app-content {
+/* 内容区：固定高度 + 内部滚动，鼠标在列表/表格区域时仅此区域滚动 */
+.app-layout .ant-layout-content.app-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: calc(100vh - 56px - 48px);
   margin: 24px;
   padding: 24px;
   background: var(--bg-card);
-  min-height: 280px;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
   transition: box-shadow 0.2s ease;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* 文件通知弹框样式 */

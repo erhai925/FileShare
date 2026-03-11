@@ -18,15 +18,19 @@ export default function Admin() {
   const [editForm] = Form.useForm()
   const [resetPasswordForm] = Form.useForm()
   const queryClient = useQueryClient()
+  const [usersPage, setUsersPage] = useState(1)
+  const [usersPageSize, setUsersPageSize] = useState(50)
+  const [logsPage, setLogsPage] = useState(1)
+  const [logsPageSize, setLogsPageSize] = useState(50)
 
   const { data: users } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => api.get('/users')
+    queryKey: ['users', usersPage, usersPageSize],
+    queryFn: () => api.get('/users', { params: { page: usersPage, pageSize: usersPageSize } })
   })
 
   const { data: logs, isLoading: logsLoading } = useQuery({
-    queryKey: ['logs'],
-    queryFn: () => api.get('/logs')
+    queryKey: ['logs', logsPage, logsPageSize],
+    queryFn: () => api.get('/logs', { params: { page: logsPage, pageSize: logsPageSize } })
   })
 
   // 创建用户
@@ -283,9 +287,19 @@ export default function Admin() {
                   loading={false}
                   pagination={{
                     total: users?.data?.total || 0,
-                    pageSize: users?.data?.pageSize || 50,
-                    current: users?.data?.page || 1,
-                    showTotal: (total) => `共 ${total} 条记录`
+                    current: usersPage,
+                    pageSize: usersPageSize,
+                    showTotal: (total) => `共 ${total} 条记录`,
+                    showSizeChanger: true,
+                    pageSizeOptions: ['20', '50', '100'],
+                    onChange: (page, size) => {
+                      setUsersPage(page)
+                      if (size != null) setUsersPageSize(size)
+                    },
+                    onShowSizeChange: (_, size) => {
+                      setUsersPage(1)
+                      setUsersPageSize(size)
+                    }
                   }}
                 />
               </div>
@@ -307,9 +321,19 @@ export default function Admin() {
                 loading={logsLoading}
                 pagination={{
                   total: logs?.data?.total || 0,
-                  pageSize: logs?.data?.pageSize || 50,
-                  current: logs?.data?.page || 1,
-                  showTotal: (total) => `共 ${total} 条记录`
+                  current: logsPage,
+                  pageSize: logsPageSize,
+                  showTotal: (total) => `共 ${total} 条记录`,
+                  showSizeChanger: true,
+                  pageSizeOptions: ['20', '50', '100'],
+                  onChange: (page, size) => {
+                    setLogsPage(page)
+                    if (size != null) setLogsPageSize(size)
+                  },
+                  onShowSizeChange: (_, size) => {
+                    setLogsPage(1)
+                    setLogsPageSize(size)
+                  }
                 }}
               />
             )

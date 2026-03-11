@@ -111,10 +111,10 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
     }
   }
 
-  // 完成上传
+  // 完成上传（合并分块可能耗时较长，大文件需 3 分钟超时）
   const completeUpload = async (uploadId: string): Promise<CompleteUploadData> => {
     try {
-      const response = (await api.post('/files/upload/complete', { uploadId })) as ApiBody
+      const response = (await api.post('/files/upload/complete', { uploadId }, { timeout: 180000 })) as ApiBody
       if (response?.success && response?.data) {
         return response.data as unknown as CompleteUploadData
       }

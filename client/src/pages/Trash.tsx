@@ -8,13 +8,14 @@ import { formatDateTime } from '../utils/date'
 
 export default function Trash() {
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const queryClient = useQueryClient()
   // const { user } = useAuthStore() // 暂时未使用
 
   const { data, isLoading, refetch, error } = useQuery({
-    queryKey: ['trash', currentPage],
+    queryKey: ['trash', currentPage, pageSize],
     queryFn: () => api.get('/files/trash/list', {
-      params: { page: currentPage, pageSize: 20 }
+      params: { page: currentPage, pageSize }
     })
   })
 
@@ -195,10 +196,19 @@ export default function Trash() {
         rowKey="id"
         pagination={{
           current: currentPage,
-          pageSize: 20,
+          pageSize,
           total: total,
-          onChange: (page) => setCurrentPage(page),
-          showTotal: (total) => `共 ${total} 条记录`
+          showTotal: (t) => `共 ${t} 条记录`,
+          showSizeChanger: true,
+          pageSizeOptions: ['20', '50', '100'],
+          onChange: (page, size) => {
+            setCurrentPage(page)
+            if (size != null) setPageSize(size)
+          },
+          onShowSizeChange: (_, size) => {
+            setCurrentPage(1)
+            setPageSize(size)
+          }
         }}
         locale={{
           emptyText: isLoading ? '加载中...' : '回收站为空'

@@ -73,6 +73,15 @@
   font-weight: 600;
 }
 
+/* 最近文件：高度随窗口变化，超出时局部滚动 */
+.dashboard-recent-files-list-wrap {
+  max-height: min(560px, calc(100vh - 380px));
+  min-height: 120px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* 排行榜与链接使用强调色 */
 .dashboard-page .ant-list-item a {
   color: var(--color-accent);

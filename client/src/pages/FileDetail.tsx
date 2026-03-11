@@ -19,6 +19,7 @@ import {
 import { 
   ArrowLeftOutlined, 
   DownloadOutlined, 
+  LinkOutlined,
   ShareAltOutlined,
   RollbackOutlined,
   DeleteOutlined
@@ -257,6 +258,35 @@ export default function FileDetail() {
         >
           下载
         </Button>
+        <Button
+          icon={<LinkOutlined />}
+          onClick={async () => {
+            try {
+              const res = await api.post('/files/download-token', { fileId: Number(fileId) }) as { success?: boolean; data?: { token?: string; expiresIn?: number }; message?: string }
+              const token = res?.data?.token
+              if (!token) throw new Error(res?.message || '未返回 token')
+              const url = `${window.location.origin}/api/files/download/${fileId}?token=${token}`
+              if (typeof navigator.clipboard?.writeText === 'function') {
+                await navigator.clipboard.writeText(url)
+              } else {
+                const ta = document.createElement('textarea')
+                ta.value = url
+                ta.style.position = 'fixed'
+                ta.style.opacity = '0'
+                document.body.appendChild(ta)
+                ta.select()
+                document.execCommand('copy')
+                document.body.removeChild(ta)
+              }
+              message.success('下载链接已复制，1 小时内打开有效。')
+            } catch (e: any) {
+              const msg = e?.response?.data?.message ?? e?.message ?? '复制下载链接失败'
+              message.error(typeof msg === 'string' ? msg : '复制下载链接失败')
+            }
+          }}
+        >
+          复制下载链接
+        </Button>
         <Button 
           icon={<ShareAltOutlined />} 
           onClick={() => setShareModalVisible(true)}
@@ -290,6 +320,9 @@ export default function FileDetail() {
           </Descriptions.Item>
           <Descriptions.Item label="当前版本">
             v{file.version}
+          </Descriptions.Item>
+          <Descriptions.Item label="下载次数">
+            {file.download_count ?? 0}
           </Descriptions.Item>
         </Descriptions>
       </Card>

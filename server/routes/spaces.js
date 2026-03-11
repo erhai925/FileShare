@@ -85,6 +85,8 @@ router.get('/', authenticate, async (req, res) => {
 router.get('/:spaceId', authenticate, async (req, res) => {
   try {
     const { spaceId } = req.params;
+    const filePage = Math.max(1, parseInt(req.query.filePage) || 1);
+    const filePageSize = Math.min(100, Math.max(1, parseInt(req.query.filePageSize) || 50));
     
     const space = await db.get(
       `SELECT s.*, u.username as owner_name, u.real_name as owner_real_name
@@ -152,7 +154,22 @@ router.get('/:spaceId', authenticate, async (req, res) => {
       filesParams.push(req.user.id, req.user.id, req.user.id, spaceId, req.user.id, req.user.id);
     }
     
-    filesSql += ` ORDER BY f.updated_at DESC LIMIT 50`;
+    const countSql = `SELECT COUNT(*) as c FROM files f WHERE f.deleted_at IS NULL AND f.space_id = ?` +
+      (req.user.role !== 'admin' && space.owner_id !== req.user.id
+        ? ` AND (
+          f.created_by = ? OR
+          EXISTS (SELECT 1 FROM permissions p WHERE p.resource_type = 'file' AND p.resource_id = f.id AND (p.user_id = ? OR p.group_id IN (SELECT group_id FROM user_group_members WHERE user_id = ?)))
+          OR EXISTS (SELECT 1 FROM permissions p WHERE p.resource_type = 'space' AND p.resource_id = ? AND (p.user_id = ? OR p.group_id IN (SELECT group_id FROM user_group_members WHERE user_id = ?)))
+        )`
+        : '');
+    const countParams = req.user.role !== 'admin' && space.owner_id !== req.user.id
+      ? [spaceId, req.user.id, req.user.id, req.user.id, spaceId, req.user.id, req.user.id]
+      : [spaceId];
+    const countRow = await db.get(countSql, countParams);
+    const filesTotal = countRow?.c ?? 0;
+    
+    filesSql += ` ORDER BY f.updated_at DESC LIMIT ? OFFSET ?`;
+    filesParams.push(filePageSize, (filePage - 1) * filePageSize);
     let files = await db.query(filesSql, filesParams);
     const permMap = await getBatchFilePermissions(req.user.id, files);
     files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
@@ -162,7 +179,8 @@ router.get('/:spaceId', authenticate, async (req, res) => {
       data: {
         ...space,
         folders,
-        files
+        files,
+        filesTotal
       }
     });
   } catch (error) {
@@ -198,7 +216,16 @@ router.delete('/:spaceId', authenticate, async (req, res) => {
       });
     }
 
+    // 按外键依赖顺序清理所有引用，避免 SQLITE_CONSTRAINT: FOREIGN KEY constraint failed
+    // 1. 软删除的文件仍持有 space_id，需先解除引用
+    await db.run('UPDATE files SET space_id = NULL, folder_id = NULL WHERE space_id = ?', [spaceId]);
+    // 2. 分块上传记录可能引用该空间
+    await db.run('DELETE FROM chunk_uploads WHERE space_id = ?', [spaceId]);
+    // 3. 子空间的 parent_id 引用当前空间
+    await db.run('UPDATE spaces SET parent_id = NULL WHERE parent_id = ?', [spaceId]);
+    // 4. 权限记录
     await db.run('DELETE FROM permissions WHERE resource_type = ? AND resource_id = ?', ['space', spaceId]);
+    // 5. 最后删除空间
     await db.run('DELETE FROM spaces WHERE id = ?', [spaceId]);
 
     await logOperation(req.user.id, 'delete_space', 'space', parseInt(spaceId), {
@@ -672,8 +699,15 @@ router.delete('/:spaceId/folders/:folderId', authenticate, async (req, res) => {
     if (childCount.count > 0) {
       return res.status(400).json({ success: false, message: '文件夹中还有子文件夹，请先删除子文件夹' });
     }
-    
-    // 删除文件夹
+
+    // 按外键依赖顺序清理所有引用，避免 SQLITE_CONSTRAINT: FOREIGN KEY constraint failed
+    // 1. 解除所有引用该文件夹的 files 记录（含软删除），再删文件夹
+    await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [folderId]);
+    // 2. 分块上传记录可能引用该文件夹
+    await db.run('DELETE FROM chunk_uploads WHERE folder_id = ?', [folderId]);
+    // 3. 权限记录
+    await db.run('DELETE FROM permissions WHERE resource_type = ? AND resource_id = ?', ['folder', folderId]);
+    // 4. 最后删除文件夹
     await db.run('DELETE FROM folders WHERE id = ?', [folderId]);
     
     await logOperation(req.user.id, 'delete_folder', 'folder', folderId, {
@@ -812,6 +846,8 @@ router.get('/:spaceId/file-tree', authenticate, async (req, res) => {
 router.get('/:spaceId/folders/:folderId/files', authenticate, async (req, res) => {
   try {
     const { spaceId, folderId } = req.params;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 50));
     
     // 检查文件夹是否存在
     const folder = await db.get('SELECT * FROM folders WHERE id = ? AND space_id = ?', [folderId, spaceId]);
@@ -866,14 +902,29 @@ router.get('/:spaceId/folders/:folderId/files', authenticate, async (req, res) =
       }
     }
     
-    sql += ` ORDER BY f.updated_at DESC`;
+    const countRow = await db.get(
+      'SELECT COUNT(*) as c FROM files f WHERE f.deleted_at IS NULL AND f.folder_id = ?' +
+      (req.user.role !== 'admin' && space && space.owner_id !== req.user.id
+        ? ` AND (
+          f.created_by = ? OR
+          EXISTS (SELECT 1 FROM permissions p WHERE p.resource_type = 'file' AND p.resource_id = f.id AND (p.user_id = ? OR p.group_id IN (SELECT group_id FROM user_group_members WHERE user_id = ?)))
+          OR EXISTS (SELECT 1 FROM permissions p WHERE p.resource_type = 'space' AND p.resource_id = ? AND (p.user_id = ? OR p.group_id IN (SELECT group_id FROM user_group_members WHERE user_id = ?)))
+        )`
+        : ''),
+      params.slice(0, params.length)
+    );
+    const total = countRow?.c ?? 0;
+    
+    sql += ` ORDER BY f.updated_at DESC LIMIT ? OFFSET ?`;
+    params.push(pageSize, (page - 1) * pageSize);
     let files = await db.query(sql, params);
     const permMap = await getBatchFilePermissions(req.user.id, files);
     files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
     
     res.json({
       success: true,
-      data: files
+      data: files,
+      total
     });
   } catch (error) {
     console.error('获取文件夹文件失败:', error);

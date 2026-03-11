@@ -60,8 +60,7 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// 静态文件服务（用于文件下载）
-app.use('/api/files/download', express.static('storage'));
+// 文件下载走 /api/files 路由（鉴权 + 解密），不在此做静态映射
 
 // 桌面客户端安装程序下载服务
 app.use('/api/downloads', express.static('downloads', {

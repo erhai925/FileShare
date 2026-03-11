@@ -68,21 +68,38 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, message: '用户名或密码错误' });
     }
     
+    if (!user.password_hash || typeof user.password_hash !== 'string') {
+      console.error('登录失败: 用户 password_hash 为空或无效，userId=', user.id);
+      return res.status(500).json({ success: false, message: '账户数据异常，请联系管理员重置密码' });
+    }
+    
     // 验证密码
-    const isValid = await bcrypt.compare(password, user.password_hash);
+    let isValid = false;
+    try {
+      isValid = await bcrypt.compare(password, user.password_hash);
+    } catch (bcryptErr) {
+      console.error('登录失败: 密码校验异常', bcryptErr);
+      return res.status(500).json({ success: false, message: '账户数据异常，请联系管理员重置密码' });
+    }
     if (!isValid) {
-      await logOperation(user.id, 'login_failed', 'user', user.id, { reason: 'wrong_password' }, req);
+      logOperation(user.id, 'login_failed', 'user', user.id, { reason: 'wrong_password' }, req).catch(err => console.error('记录登录失败日志失败:', err));
       return res.status(401).json({ success: false, message: '用户名或密码错误' });
     }
     
     // 生成JWT Token
-    const token = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
-      process.env.JWT_SECRET || 'default-secret',
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    let token;
+    try {
+      token = jwt.sign(
+        { userId: user.id, username: user.username, role: user.role },
+        process.env.JWT_SECRET || 'default-secret',
+        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+      );
+    } catch (jwtErr) {
+      console.error('登录失败: 生成 Token 异常', jwtErr);
+      return res.status(500).json({ success: false, message: '登录失败，请稍后重试' });
+    }
     
-    await logOperation(user.id, 'login', 'user', user.id, {}, req);
+    logOperation(user.id, 'login', 'user', user.id, {}, req).catch(err => console.error('记录登录日志失败:', err));
     
     res.json({
       success: true,

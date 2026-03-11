@@ -46,6 +46,10 @@ export default function SpaceDetail() {
   const [batchFileIds, setBatchFileIds] = useState<number[]>([])
   const [moveSubmitting, setMoveSubmitting] = useState(false)
   const [chunkUploadVisible, setChunkUploadVisible] = useState(false)
+  const [spaceFilePage, setSpaceFilePage] = useState(1)
+  const [spaceFilePageSize, setSpaceFilePageSize] = useState(50)
+  const [folderFilePage, setFolderFilePage] = useState(1)
+  const [folderFilePageSize, setFolderFilePageSize] = useState(50)
 
   const spaceIdNum = spaceId ? parseInt(spaceId) : null
 
@@ -89,10 +93,14 @@ export default function SpaceDetail() {
     return () => clearTimeout(timer)
   }, [spaceSearchKeyword])
 
-  // 获取空间详情
+  useEffect(() => {
+    setFolderFilePage(1)
+  }, [selectedFolderId])
+
+  // 获取空间详情（含空间文件分页）
   const { data: spaceDetail, isLoading: spaceLoading, refetch: refetchSpaceDetail } = useQuery({
-    queryKey: ['space-detail', spaceIdNum],
-    queryFn: () => api.get(`/spaces/${spaceIdNum}`),
+    queryKey: ['space-detail', spaceIdNum, spaceFilePage, spaceFilePageSize],
+    queryFn: () => api.get(`/spaces/${spaceIdNum}`, { params: { filePage: spaceFilePage, filePageSize: spaceFilePageSize } }),
     enabled: !!spaceIdNum
   })
 
@@ -110,10 +118,10 @@ export default function SpaceDetail() {
     enabled: !!spaceIdNum
   })
 
-  // 获取选中文件夹的文件列表
+  // 获取选中文件夹的文件列表（分页）
   const { data: folderFilesData, refetch: refetchFolderFiles } = useQuery({
-    queryKey: ['folder-files', spaceIdNum, selectedFolderId],
-    queryFn: () => api.get(`/spaces/${spaceIdNum}/folders/${selectedFolderId}/files`),
+    queryKey: ['folder-files', spaceIdNum, selectedFolderId, folderFilePage, folderFilePageSize],
+    queryFn: () => api.get(`/spaces/${spaceIdNum}/folders/${selectedFolderId}/files`, { params: { page: folderFilePage, pageSize: folderFilePageSize } }),
     enabled: !!spaceIdNum && !!selectedFolderId
   })
 
@@ -527,13 +535,11 @@ export default function SpaceDetail() {
   const buildFileTree = (folders: any[], rootFiles: any[] = []): DataNode[] => {
     const treeNodes: DataNode[] = []
     
-    // 添加根目录下的文件
+    // 添加根目录下的文件（展示全部有权限的操作）
     rootFiles.forEach((file: any) => {
-      const perms = file?.user_permissions || {}
-      const canWrite = file?.created_by === user?.id || user?.role === 'admin' || perms.write
       treeNodes.push({
         title: (
-          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Space style={{ width: '100%', justifyContent: 'space-between' }} onClick={(e) => e.stopPropagation()}>
             <a
               href={`/files/${file.id}`}
               onClick={(e) => {
@@ -543,20 +549,15 @@ export default function SpaceDetail() {
             >
               {file.original_name}
             </a>
-            {canWrite && (
-              <Button
-                type="link"
-                size="small"
-                icon={<FolderOpenOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleMoveFile(file)
-                }}
-                title="移动到文件夹"
-              >
-                移动
-              </Button>
-            )}
+            <FileActions
+              record={file}
+              onPreview={(r) => { setSelectedFile(r); setPreviewFileId(r.id); setPreviewVisible(true) }}
+              onDownload={handleDownload}
+              onRename={handleRenameFile}
+              onMove={handleMoveFile}
+              onRemoveFromSpace={handleRemoveFromSpace}
+              onDelete={handleDeleteFile}
+            />
           </Space>
         ),
         key: `file-${file.id}`,
@@ -570,13 +571,11 @@ export default function SpaceDetail() {
       const folderFiles = folder.files || []
       const children: DataNode[] = []
       
-      // 添加文件夹中的文件
+      // 添加文件夹中的文件（展示全部有权限的操作）
       folderFiles.forEach((file: any) => {
-        const perms = file?.user_permissions || {}
-        const canWrite = file?.created_by === user?.id || user?.role === 'admin' || perms.write
         children.push({
           title: (
-            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Space style={{ width: '100%', justifyContent: 'space-between' }} onClick={(e) => e.stopPropagation()}>
               <a
                 href={`/files/${file.id}`}
                 onClick={(e) => {
@@ -586,20 +585,15 @@ export default function SpaceDetail() {
               >
                 {file.original_name}
               </a>
-              {canWrite && (
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<FolderOpenOutlined />}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleMoveFile(file)
-                  }}
-                  title="移动到文件夹"
-                >
-                  移动
-                </Button>
-              )}
+              <FileActions
+                record={file}
+                onPreview={(r) => { setSelectedFile(r); setPreviewFileId(r.id); setPreviewVisible(true) }}
+                onDownload={handleDownload}
+                onRename={handleRenameFile}
+                onMove={handleMoveFile}
+                onRemoveFromSpace={handleRemoveFromSpace}
+                onDelete={handleDeleteFile}
+              />
             </Space>
           ),
           key: `file-${file.id}`,
@@ -1012,6 +1006,7 @@ export default function SpaceDetail() {
                       </Button>
                     </Space>
                   </Space>
+                  <div className="scroll-table-wrap">
                   <Table
                     rowSelection={{
                       selectedRowKeys: fileListSelectedRowKeys,
@@ -1078,8 +1073,20 @@ export default function SpaceDetail() {
                     ]}
                     dataSource={space.files || []}
                     rowKey="id"
-                    pagination={false}
+                    pagination={{
+                      current: spaceFilePage,
+                      pageSize: spaceFilePageSize,
+                      total: space.filesTotal ?? 0,
+                      showSizeChanger: true,
+                      pageSizeOptions: [10, 50, 100],
+                      showTotal: (t) => `共 ${t} 条`,
+                      onChange: (p, size) => {
+                        setSpaceFilePage(p)
+                        setSpaceFilePageSize(size || 50)
+                      }
+                    }}
                   />
+                  </div>
                 </div>
               )
             },
@@ -1132,6 +1139,7 @@ export default function SpaceDetail() {
                           </Button>
                         </Space>
                       </Space>
+                      <div className="scroll-table-wrap">
                       <Table
                         rowSelection={{
                           selectedRowKeys: folderFilesSelectedRowKeys,
@@ -1196,11 +1204,23 @@ export default function SpaceDetail() {
                             )
                           }
                         ]}
-                        dataSource={folderFilesData?.data || []}
+                        dataSource={folderFilesData?.data ?? []}
                         rowKey="id"
-                        pagination={false}
                         size="small"
+                        pagination={{
+                          current: folderFilePage,
+                          pageSize: folderFilePageSize,
+                          total: folderFilesData?.total ?? 0,
+                          showSizeChanger: true,
+                          pageSizeOptions: [10, 50, 100],
+                          showTotal: (t) => `共 ${t} 条`,
+                          onChange: (p, size) => {
+                            setFolderFilePage(p)
+                            setFolderFilePageSize(size || 50)
+                          }
+                        }}
                       />
+                      </div>
                     </div>
                   )}
                 </div>

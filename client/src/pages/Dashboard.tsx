@@ -1,13 +1,12 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Row, Col, Statistic, List, Typography, Button, Space, Tag, message } from 'antd'
+import { Card, Row, Col, Statistic, List, Typography, Space } from 'antd'
 import {
   FileOutlined,
   FolderOutlined,
   TeamOutlined,
   CloudUploadOutlined,
   DownloadOutlined,
-  WindowsOutlined,
-  AppleOutlined,
   TrophyOutlined,
   InfoCircleOutlined
 } from '@ant-design/icons'
@@ -19,10 +18,14 @@ import './Dashboard.css'
 
 const { Title } = Typography
 
+const RECENT_PAGE_SIZE_OPTIONS = [10, 50, 100]
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin'
+  const [recentPage, setRecentPage] = useState(1)
+  const [recentPageSize, setRecentPageSize] = useState(10)
   
   const { data: stats } = useQuery({
     queryKey: ['admin', 'stats'],
@@ -76,8 +79,8 @@ export default function Dashboard() {
   const displayStats = isAdmin ? stats : userStats
 
   const { data: recentFilesList } = useQuery({
-    queryKey: ['files', 'recent'],
-    queryFn: () => api.get('/files/list', { params: { page: 1, pageSize: 10 } })
+    queryKey: ['files', 'recent', recentPage, recentPageSize],
+    queryFn: () => api.get('/files/list', { params: { page: recentPage, pageSize: recentPageSize } })
   })
 
   // 获取最近一周的新文件（包括新上传和更新的，用于标记）
@@ -98,6 +101,18 @@ export default function Dashboard() {
     queryFn: () => api.get('/files/top-uploaders')
   })
 
+  // 下载次数最多的前5个文件
+  const { data: topDownloadsData } = useQuery({
+    queryKey: ['files', 'top-downloads'],
+    queryFn: () => api.get('/files/top-downloads')
+  })
+
+  // 下载操作最多的前5名用户（排除 admin）
+  const { data: topDownloadersData } = useQuery({
+    queryKey: ['files', 'top-downloaders'],
+    queryFn: () => api.get('/files/top-downloaders')
+  })
+
   // 判断文件是否为最近一周的新文件
   const isRecentlyNew = (fileId: number) => {
     if (!recentFiles?.data?.files) return false
@@ -105,43 +120,10 @@ export default function Dashboard() {
   }
   
 
-  // 处理下载
-  const handleDownload = async (platform: 'mac' | 'win' | 'linux') => {
-    const fileMap = {
-      mac: { name: 'FileShare.dmg', displayName: 'macOS 版本' },
-      win: { name: 'FileShare-Setup.exe', displayName: 'Windows 版本' },
-      linux: { name: 'FileShare.AppImage', displayName: 'Linux 版本' }
-    }
-    
-    const fileInfo = fileMap[platform]
-    const downloadUrl = `/api/downloads/${fileInfo.name}`
-    
-    try {
-      // 先检查文件是否存在
-      const response = await fetch(downloadUrl, { method: 'HEAD' })
-      if (!response.ok) {
-        message.warning(`${fileInfo.displayName} 暂未提供，请先构建安装程序。`)
-        return
-      }
-      
-      // 创建临时链接进行下载
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = fileInfo.name
-      link.target = '_blank'
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      
-      message.success(`正在下载 ${fileInfo.displayName}...`)
-    } catch (error) {
-      console.error('下载失败:', error)
-      message.error(`下载 ${fileInfo.displayName} 失败，请稍后重试或联系管理员。`)
-    }
-  }
-
   const version = (versionData as { version?: string })?.version || '-'
   const topUploaders = topUploadersData?.data?.list || []
+  const topDownloads = topDownloadsData?.data?.list || []
+  const topDownloaders = topDownloadersData?.data?.list || []
 
   return (
     <div className="dashboard-page">
@@ -199,28 +181,98 @@ export default function Dashboard() {
         )}
       </Row>
 
-      {topUploaders.length > 0 && (
+      {(topUploaders.length > 0 || topDownloaders.length > 0) && (
+        <Row gutter={16} className="dashboard-section" style={{ marginBottom: 24 }}>
+          {topUploaders.length > 0 && (
+            <Col span={12}>
+              <Card
+                title={
+                  <Space>
+                    <TrophyOutlined />
+                    用户上传排行榜（前5名）
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={topUploaders}
+                  renderItem={(item: any, index: number) => (
+                    <List.Item>
+                      <Space>
+                        <span style={{ color: '#faad14', fontWeight: 'bold', minWidth: 20 }}>
+                          {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}
+                        </span>
+                        <span>{item.realName}</span>
+                        <span style={{ color: '#999' }}>上传 {item.uploadCount} 个文件</span>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </Col>
+          )}
+          {topDownloaders.length > 0 && (
+            <Col span={12}>
+              <Card
+                title={
+                  <Space>
+                    <DownloadOutlined />
+                    用户下载排行榜（前5名）
+                  </Space>
+                }
+              >
+                <List
+                  size="small"
+                  dataSource={topDownloaders}
+                  renderItem={(item: any, index: number) => (
+                    <List.Item>
+                      <Space>
+                        <span style={{ color: '#faad14', fontWeight: 'bold', minWidth: 20 }}>
+                          {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}
+                        </span>
+                        <span>{item.realName}</span>
+                        <span style={{ color: '#999' }}>下载 {item.downloadCount} 次</span>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Card>
+            </Col>
+          )}
+        </Row>
+      )}
+
+      {topDownloads.length > 0 && (
         <Row gutter={16} className="dashboard-section" style={{ marginBottom: 24 }}>
           <Col span={24}>
             <Card
               title={
                 <Space>
-                  <TrophyOutlined />
-                  上传排行榜（前5名）
+                  <DownloadOutlined />
+                  文件下载排行榜（前5名）
                 </Space>
               }
             >
               <List
                 size="small"
-                dataSource={topUploaders}
+                dataSource={topDownloads}
                 renderItem={(item: any, index: number) => (
                   <List.Item>
                     <Space>
                       <span style={{ color: '#faad14', fontWeight: 'bold', minWidth: 20 }}>
                         {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}
                       </span>
-                      <span>{item.realName}</span>
-                      <span style={{ color: '#999' }}>上传 {item.uploadCount} 个文件</span>
+                      <a
+                        href={`/files/${item.id}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          navigate(`/files/${item.id}`)
+                        }}
+                        style={{ color: 'var(--color-accent)' }}
+                      >
+                        {item.original_name}
+                      </a>
+                      <span style={{ color: '#999' }}>下载 {item.download_count} 次</span>
                     </Space>
                   </List.Item>
                 )}
@@ -230,53 +282,22 @@ export default function Dashboard() {
         </Row>
       )}
 
-      <Row gutter={16} className="dashboard-section" style={{ marginBottom: 24 }}>
-        <Col span={24}>
-          <Card 
-            title={
-              <Space>
-                <DownloadOutlined />
-                桌面客户端
-              </Space>
-            }
-            extra={<Tag color="cyan">推荐</Tag>}
-          >
-            <div style={{ marginBottom: 16 }}>
-              <Typography.Paragraph>
-                下载桌面客户端，享受更好的文件管理体验。支持拖拽上传、本地文件选择、系统托盘等功能。
-              </Typography.Paragraph>
-            </div>
-            <Space size="large" wrap>
-              <Button
-                type="primary"
-                size="large"
-                icon={<AppleOutlined />}
-                onClick={() => handleDownload('mac')}
-              >
-                下载 macOS 版本
-              </Button>
-              <Button
-                type="primary"
-                size="large"
-                icon={<WindowsOutlined />}
-                onClick={() => handleDownload('win')}
-              >
-                下载 Windows 版本
-              </Button>
-            </Space>
-            <div style={{ marginTop: 16, padding: 12, backgroundColor: 'var(--color-accent-light)', borderRadius: 8 }}>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                💡 提示：如果下载链接不可用，请先运行 <code>npm run electron:build</code> 构建安装程序。
-                构建完成后，安装程序将位于 <code>dist-electron</code> 目录中，请将其复制到 <code>downloads</code> 目录。
-              </Typography.Text>
-            </div>
-          </Card>
-        </Col>
-      </Row>
-
       <Card title="最近文件" className="dashboard-section">
+        <div className="dashboard-recent-files-list-wrap">
         <List
           dataSource={recentFilesList?.data?.files || []}
+          pagination={{
+            current: recentPage,
+            pageSize: recentPageSize,
+            total: recentFilesList?.data?.total ?? 0,
+            showSizeChanger: true,
+            pageSizeOptions: RECENT_PAGE_SIZE_OPTIONS,
+            showTotal: (t) => `共 ${t} 条`,
+            onChange: (p, size) => {
+              setRecentPage(p)
+              setRecentPageSize(size || 10)
+            }
+          }}
           renderItem={(item: any) => {
             const isNew = isRecentlyNew(item.id)
             const spaceLink = item.space_id ? (
@@ -346,6 +367,7 @@ export default function Dashboard() {
             )
           }}
         />
+        </div>
       </Card>
     </div>
   )

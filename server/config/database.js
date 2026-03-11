@@ -19,6 +19,7 @@ async function init() {
           console.log('数据库连接成功');
           createTables()
             .then(() => ensureChunkUploadsFileId())
+            .then(() => ensureFilesDownloadCount())
             .then(resolve)
             .catch(reject);
         }
@@ -257,6 +258,16 @@ async function ensureChunkUploadsFileId() {
   if (!hasFileId) {
     await run(`ALTER TABLE chunk_uploads ADD COLUMN file_id INTEGER REFERENCES files(id)`);
     console.log('已为 chunk_uploads 表添加 file_id 列');
+  }
+}
+
+// 为 files 表补全 download_count 列（下载次数，用于排行榜与详情展示）
+async function ensureFilesDownloadCount() {
+  const rows = await query(`PRAGMA table_info(files)`);
+  const hasCol = rows && rows.some(r => r.name === 'download_count');
+  if (!hasCol) {
+    await run(`ALTER TABLE files ADD COLUMN download_count INTEGER DEFAULT 0`);
+    console.log('已为 files 表添加 download_count 列');
   }
 }
 
