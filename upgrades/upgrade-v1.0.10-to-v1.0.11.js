@@ -45,8 +45,8 @@ async function updateVersion(projectRoot) {
   const oldVersion = versionInfo.currentVersion;
 
   if (oldVersion === TARGET_VERSION) {
-    log(`当前已是 v${TARGET_VERSION}，无需更新。`, 'yellow');
-    return;
+    log(`当前版本号已为 v${TARGET_VERSION}，无需再次更新版本号。`, 'yellow');
+    return 'already_target';
   }
   if (oldVersion !== FROM_VERSION) {
     log(`版本不匹配：当前 ${oldVersion}，期望 ${FROM_VERSION}。请先升级到 v${FROM_VERSION}。`, 'red');
@@ -63,6 +63,7 @@ async function updateVersion(projectRoot) {
 
   await fs.writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf8');
   log(`版本已更新: ${oldVersion} -> ${TARGET_VERSION}`, 'green');
+  return 'updated';
 }
 
 async function main() {
@@ -72,7 +73,7 @@ async function main() {
   log('========================================\n', 'blue');
 
   const projectRoot = path.resolve(__dirname, '..');
-  await updateVersion(projectRoot);
+  const result = await updateVersion(projectRoot);
 
   log('\n本次更新：', 'yellow');
   log('1. 工作台移除桌面客户端下载；最近文件/空间文件分页与每页 10/50/100');
@@ -81,6 +82,11 @@ async function main() {
   log('4. 文件路径多候选根与历史 fallback；下载文件名 RFC5987');
   log('5. FilePreview：.docx 本地预览、内网判断、文本预览；Files/SpaceDetail 上传 customRequest');
   log('6. server files.js / encryption.js 与参考实现融合');
+
+  if (result === 'already_target') {
+    log('\n说明：当前升级前运行中的系统为 v1.0.10。若 version.json 已为 v1.0.11（例如拉取新代码后），仅表示版本号无需再次写入；仍请完成代码拉取、前端安装与构建、重启服务。', 'yellow');
+    log('\n若尚未完成代码拉取与前端构建，请按以下步骤操作：', 'yellow');
+  }
   log('\n请先执行 git pull 拉取最新代码，在 client 目录执行 npm install（含 docx-preview），再执行 npm run client:build 构建前端，最后重启服务。', 'yellow');
   log('');
 }
