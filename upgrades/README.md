@@ -14,6 +14,10 @@
 - `upgrade-v1.0.4-to-v1.0.5.js` - 从 v1.0.4 升级到 v1.0.5（限流优化、大文件上传超时、429 友好提示、文档完善）
 - `upgrade-v1.0.5-to-v1.0.6.js` - 从 v1.0.5 升级到 v1.0.6（版本号更新）
 - `upgrade-v1.0.6-to-v1.0.7.js` - 从 v1.0.6 升级到 v1.0.7（UI 设计系统优化、多页批量操作）
+- `upgrade-v1.0.7-to-v1.0.8.js` - 从 v1.0.7 升级到 v1.0.8（空间卡片、大文件上传、分块上传）
+- `upgrade-v1.0.8-to-v1.0.9.js` - 从 v1.0.8 升级到 v1.0.9（时区、上传文案）
+- `upgrade-v1.0.9-to-v1.0.10.js` - 从 v1.0.9 升级到 v1.0.10（空间大文件上传、永久删除等）
+- `upgrade-v1.0.10-to-v1.0.11.js` - 从 v1.0.10 升级到 v1.0.11（分页与局部滚动、下载链接 token、FilePreview 融合、上传 customRequest 等，**当前默认**）
 
 ## 升级脚本结构
 
@@ -27,7 +31,7 @@
 ## 运行升级脚本
 
 ```bash
-# 运行最新升级脚本（推荐）
+# 运行最新升级脚本（推荐）：从 v1.0.10 升级到 v1.0.11
 npm run upgrade
 
 # 或运行特定版本的升级脚本
@@ -35,8 +39,15 @@ npm run upgrade:1.0.3   # v1.0.2 -> v1.0.3
 npm run upgrade:1.0.4   # v1.0.3 -> v1.0.4
 npm run upgrade:1.0.5   # v1.0.4 -> v1.0.5
 npm run upgrade:1.0.6   # v1.0.5 -> v1.0.6
-npm run upgrade:1.0.7   # v1.0.6 -> v1.0.7（当前最新）
+npm run upgrade:1.0.7   # v1.0.6 -> v1.0.7
+npm run upgrade:1.0.8   # v1.0.7 -> v1.0.8
+npm run upgrade:1.0.9   # v1.0.8 -> v1.0.9
+npm run upgrade:1.0.10  # v1.0.9 -> v1.0.10
+npm run upgrade:1.0.11  # v1.0.10 -> v1.0.11（与 npm run upgrade 相同）
+npm run upgrade:1.0.9-from-1.0.7  # v1.0.7/1.0.8 直接到 v1.0.9
 ```
+
+**说明**：`npm run upgrade` 默认执行当前最新的升级脚本（v1.0.10 → v1.0.11）。若当前版本不是 v1.0.10，请使用对应的 `npm run upgrade:x.x.x` 或先升级到 v1.0.10 再执行 `npm run upgrade`。
 
 ## v1.0.3 升级脚本说明
 
@@ -98,6 +109,18 @@ npm run upgrade:1.0.7   # v1.0.6 -> v1.0.7（当前最新）
 - **默认部署路径**：项目部署根目录默认值为 `/home/FileShare-main`（可修改）
 - 升级后需重新安装依赖、构建前端并重启服务；若通过 Git 部署，请先 `git pull` 再执行升级脚本
 - **构建修复**：已修复 TS6133（未使用变量），确保 `npm run client:build` 通过
+
+## v1.0.11 升级脚本说明
+
+`upgrade-v1.0.10-to-v1.0.11.js` 无数据库结构变更，包含：
+
+- **工作台与分页**：移除桌面客户端下载入口；最近文件、空间文件、文件夹内文件支持分页与每页 10/50/100 条；内容区局部滚动
+- **下载链接**：支持复制带 token 的下载链接（1 小时有效）；下载文件名 RFC 5987；文件路径多候选根与历史 fallback
+- **FilePreview 融合**：docx-preview 本地 .docx 预览、内网判断、文本文件预览（txt/md/json 等）；前端需安装依赖 `docx-preview`
+- **上传**：Files 页、SpaceDetail 页普通上传改为 customRequest（300s 超时、服务端 hint/error 拼装）；大文件失败时提示使用「大文件上传」
+- **服务端**：files.js 与参考实现融合说明；encryption.js 明文模式流式使用 pipeline + Transform
+
+**升级步骤**：在项目根目录执行 `npm run upgrade`（或 `npm run upgrade:1.0.11`），然后 `git pull`、在 client 目录 `npm install`、`npm run client:build`，最后重启服务。若提示版本不匹配，请确认 `upgrades/version.json` 中 `currentVersion` 为 `1.0.10`。
 
 ## 注意事项
 
