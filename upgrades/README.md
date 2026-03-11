@@ -45,7 +45,10 @@ npm run upgrade:1.0.9   # v1.0.8 -> v1.0.9
 npm run upgrade:1.0.10  # v1.0.9 -> v1.0.10
 npm run upgrade:1.0.11  # v1.0.10 -> v1.0.11（与 npm run upgrade 相同）
 npm run upgrade:1.0.9-from-1.0.7  # v1.0.7/1.0.8 直接到 v1.0.9
+npm run upgrade:latest [路径]     # 强制升级到最新版本（不校验当前版本，直接覆盖）
 ```
+
+**强制升级到最新**：若希望**不校验当前版本、直接将 version.json 标为最新版本**（版本号相同也会重新覆盖），请使用 `npm run upgrade:latest` 或 `npm run upgrade:latest -- /您的部署根目录`。会先询问或使用参数中的更新路径，再写入最新版本号。
 
 **说明**：`npm run upgrade` 默认执行当前最新的升级脚本（v1.0.10 → v1.0.11）。脚本会**先询问更新路径**（当前运行系统的项目根目录），待输入后从该路径下的 `upgrades/version.json` 读取当前版本号，再执行升级；这样无论从哪个目录执行脚本，都能对“正在运行”的部署目录正确升级。若直接回车则使用脚本所在项目的根目录。若当前版本不是 v1.0.10，请使用对应的 `npm run upgrade:x.x.x` 或先升级到 v1.0.10 再执行 `npm run upgrade`。
 
