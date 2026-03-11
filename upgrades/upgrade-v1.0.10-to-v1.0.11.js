@@ -16,13 +16,36 @@
  * 10. server/utils/encryption.js：明文模式流式处理改用 stream.pipeline + Transform，更稳健。
  * 11. 其他：登录 500 与正则语法修复；admin 密码重置脚本。
  *
- * 无数据库结构变更。升级方式：git pull 后执行本脚本更新版本号，在 client 目录执行 npm install（含 docx-preview），再构建前端并重启服务即可。
+ * 无数据库结构变更。升级流程：运行脚本后先输入「更新路径」（当前运行系统的项目根目录），脚本从该路径读取 upgrades/version.json 得到当前版本号再执行升级；完成后在更新路径下 git pull、client 目录 npm install 与 npm run client:build、重启服务。
  */
 
 const fs = require('fs').promises;
 const path = require('path');
+const readline = require('readline');
 
 const getVersionFilePath = (projectRoot) => path.join(projectRoot || path.resolve(__dirname, '..'), 'upgrades', 'version.json');
+const defaultProjectRoot = path.resolve(__dirname, '..');
+
+function ask(question) {
+  // npm 等会关闭或重定向 stdin，导致无提示。在 Linux/Unix 下从 /dev/tty 读入才能保证提示并等待输入
+  let input = process.stdin;
+  if (!process.stdin.isTTY && process.platform !== 'win32') {
+    try {
+      input = require('fs').createReadStream('/dev/tty');
+    } catch (e) {
+      input = process.stdin;
+    }
+  }
+  const rl = readline.createInterface({ input, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer || '');
+    });
+  }).finally(() => {
+    if (input !== process.stdin && input.destroy) input.destroy();
+  });
+}
 const TARGET_VERSION = '1.0.11';
 const FROM_VERSION = '1.0.10';
 
@@ -72,7 +95,34 @@ async function main() {
   log('  分页、局部滚动、下载链接与文件名', 'blue');
   log('========================================\n', 'blue');
 
-  const projectRoot = path.resolve(__dirname, '..');
+  // 更新路径：优先用命令行参数，其次交互输入，最后默认
+  let projectRoot = defaultProjectRoot;
+  const argPath = process.argv[2];
+  if (argPath && argPath.trim()) {
+    projectRoot = path.resolve(argPath.trim());
+    log(`使用命令行参数作为更新路径: ${projectRoot}\n`, 'blue');
+  } else {
+    const defaultHint = defaultProjectRoot;
+    const inputPath = await ask(`请输入更新路径（当前运行系统的项目根目录，将从此路径读取版本号并写入升级结果）\n[直接回车使用默认: ${defaultHint}]: `);
+    projectRoot = inputPath.trim() ? path.resolve(inputPath.trim()) : defaultProjectRoot;
+  }
+  if (!argPath && !process.stdin.isTTY && projectRoot === defaultProjectRoot) {
+    log(`未检测到交互终端且未传入路径参数，使用默认更新路径: ${projectRoot}`, 'yellow');
+    log(`若需指定其他路径，请使用: npm run upgrade -- /您的部署根目录\n`, 'yellow');
+  }
+
+  const versionFile = getVersionFilePath(projectRoot);
+  try {
+    await fs.access(versionFile);
+  } catch (e) {
+    log(`错误：在路径 ${projectRoot} 下未找到 upgrades/version.json，请确认更新路径是否正确。`, 'red');
+    process.exit(1);
+  }
+
+  const currentVersion = await getCurrentVersion(projectRoot);
+  log(`\n更新路径: ${projectRoot}`, 'blue');
+  log(`该路径下当前版本: v${currentVersion}\n`, 'blue');
+
   const result = await updateVersion(projectRoot);
 
   log('\n本次更新：', 'yellow');

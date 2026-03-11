@@ -47,7 +47,7 @@ npm run upgrade:1.0.11  # v1.0.10 -> v1.0.11（与 npm run upgrade 相同）
 npm run upgrade:1.0.9-from-1.0.7  # v1.0.7/1.0.8 直接到 v1.0.9
 ```
 
-**说明**：`npm run upgrade` 默认执行当前最新的升级脚本（v1.0.10 → v1.0.11）。若当前版本不是 v1.0.10，请使用对应的 `npm run upgrade:x.x.x` 或先升级到 v1.0.10 再执行 `npm run upgrade`。
+**说明**：`npm run upgrade` 默认执行当前最新的升级脚本（v1.0.10 → v1.0.11）。脚本会**先询问更新路径**（当前运行系统的项目根目录），待输入后从该路径下的 `upgrades/version.json` 读取当前版本号，再执行升级；这样无论从哪个目录执行脚本，都能对“正在运行”的部署目录正确升级。若直接回车则使用脚本所在项目的根目录。若当前版本不是 v1.0.10，请使用对应的 `npm run upgrade:x.x.x` 或先升级到 v1.0.10 再执行 `npm run upgrade`。
 
 ## v1.0.3 升级脚本说明
 
@@ -120,7 +120,15 @@ npm run upgrade:1.0.9-from-1.0.7  # v1.0.7/1.0.8 直接到 v1.0.9
 - **上传**：Files 页、SpaceDetail 页普通上传改为 customRequest（300s 超时、服务端 hint/error 拼装）；大文件失败时提示使用「大文件上传」
 - **服务端**：files.js 与参考实现融合说明；encryption.js 明文模式流式使用 pipeline + Transform
 
-**升级步骤**：在项目根目录执行 `npm run upgrade`（或 `npm run upgrade:1.0.11`），然后 `git pull`、在 client 目录 `npm install`、`npm run client:build`，最后重启服务。若提示版本不匹配，请确认 `upgrades/version.json` 中 `currentVersion` 为 `1.0.10`。
+**升级步骤**：
+1. 在任意目录执行 `npm run upgrade`（或进入项目后执行 `npm run upgrade:1.0.11`）。
+2. **更新路径**二选一：
+   - **交互输入**：脚本会提示「请输入更新路径」，输入**当前运行系统的项目根目录**（例如 `/home/FileShare-main`），回车。直接回车则使用脚本所在项目根目录。若未出现提示（例如非交互环境），请用下面命令行参数方式。
+   - **命令行参数**：`npm run upgrade -- /home/FileShare-main`（将路径改为你的部署根目录），无需等待提示。
+3. 脚本从该路径下的 `upgrades/version.json` 读取当前版本号并显示，若为 v1.0.10 则写入 v1.0.11 并提示后续步骤；若已是 v1.0.11 则仅提示无需再次更新版本号及后续部署步骤。
+4. 完成脚本后：在**更新路径**下执行 `git pull`，在 `client` 目录执行 `npm install`（含 docx-preview）、`npm run client:build`，最后重启服务。
+
+这样即使从拉取的新代码目录执行升级（该目录下 version.json 可能已是 1.0.11），只要更新路径指向仍为 v1.0.10 的部署目录，即可正确对该部署做版本号升级。
 
 ## 注意事项
 
