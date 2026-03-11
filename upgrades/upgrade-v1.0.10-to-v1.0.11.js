@@ -10,9 +10,13 @@
  * 4. 下载链接：支持复制带 token 的下载链接（1 小时有效）；复制时兼容无 clipboard API 环境。
  * 5. 文件路径解析：resolveFilePath 多候选根与按文件名搜索，支持升级后历史文件；可选 LEGACY_STORAGE_PATHS、storage_path_fallbacks。
  * 6. 下载文件名：Content-Disposition 使用 RFC 5987 filename*，确保中文等文件名正确保存。
- * 7. 其他：登录 500 与正则语法修复；admin 密码重置脚本。
+ * 7. FilePreview 融合：docx-preview 本地 .docx 预览；内网/本地判断；文本文件预览（txt/md/json 等）；blob/iframe 清理与错误提示；前端依赖新增 docx-preview。
+ * 8. 前端上传：Files 页、SpaceDetail 页普通上传改为 customRequest（FormData + api.post、300s 超时、服务端 hint/error 拼装）；大文件失败时提示使用「大文件上传」；SpaceDetail 文件夹内文件表格 total 修复。
+ * 9. server/routes/files.js：与参考 files.js 融合说明，保留 resolveFilePath、setAttachmentDisposition、download-token、download_count。
+ * 10. server/utils/encryption.js：明文模式流式处理改用 stream.pipeline + Transform，更稳健。
+ * 11. 其他：登录 500 与正则语法修复；admin 密码重置脚本。
  *
- * 无数据库结构变更。升级方式：git pull 后执行本脚本更新版本号，构建前端并重启服务即可。
+ * 无数据库结构变更。升级方式：git pull 后执行本脚本更新版本号，在 client 目录执行 npm install（含 docx-preview），再构建前端并重启服务即可。
  */
 
 const fs = require('fs').promises;
@@ -54,7 +58,7 @@ async function updateVersion(projectRoot) {
   versionInfo.upgradeHistory.push({
     version: TARGET_VERSION,
     date: new Date().toISOString().split('T')[0],
-    description: '从 1.0.10 升级到 1.0.11 - 工作台/空间分页与局部滚动、下载链接 token、路径 fallback、下载文件名 RFC5987、复制兼容'
+    description: '从 1.0.10 升级到 1.0.11 - 工作台/空间分页与局部滚动、下载链接 token、路径 fallback、下载文件名 RFC5987、复制兼容；FilePreview docx/文本预览、上传 customRequest、files/encryption 融合'
   });
 
   await fs.writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf8');
@@ -75,7 +79,9 @@ async function main() {
   log('2. 内容区局部滚动，列表高度随窗口变化');
   log('3. 复制下载链接支持 token，无 clipboard 时降级复制');
   log('4. 文件路径多候选根与历史 fallback；下载文件名 RFC5987');
-  log('\n请先执行 git pull 拉取最新代码，再执行 npm run client:build 构建前端，最后重启服务。', 'yellow');
+  log('5. FilePreview：.docx 本地预览、内网判断、文本预览；Files/SpaceDetail 上传 customRequest');
+  log('6. server files.js / encryption.js 与参考实现融合');
+  log('\n请先执行 git pull 拉取最新代码，在 client 目录执行 npm install（含 docx-preview），再执行 npm run client:build 构建前端，最后重启服务。', 'yellow');
   log('');
 }
 

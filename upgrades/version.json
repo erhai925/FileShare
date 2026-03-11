@@ -1,5 +1,5 @@
 {
-  "currentVersion": "1.0.12",
+  "currentVersion": "1.0.11",
   "upgradeHistory": [
     {"version": "1.0.0", "date": "2024-01-01", "description": "初始版本"},
     {"version": "1.0.1", "date": "2024-12-XX", "description": "从 1.0.0 升级到 1.0.1 - 完善Word文件预览功能，添加localhost环境检测和警告弹框提示"},
@@ -10,7 +10,6 @@
     {"version": "1.0.8", "date": "2025-02-07", "description": "从 1.0.7 升级到 1.0.8 - 空间卡片布局、大文件上传与进度修复、上传可选空间/文件夹、操作日志客户端IP、chunk_uploads.file_id、分块上传文件名编码"},
     {"version": "1.0.9", "date": "2025-02-07", "description": "从 1.0.8 升级到 1.0.9 - 时区统一东八区北京时间、普通上传「上传到」文案优化"},
     {"version": "1.0.10", "date": "2025-02-07", "description": "空间大文件上传、下载等待反馈、永久删除超时与外键修复、登录校验与防缓存"},
-    {"version": "1.0.11", "date": "2025-02-07", "description": "工作台移除桌面客户端下载；最近文件/空间文件分页与每页10/50/100；内容区局部滚动与随窗口变化；下载链接 token 与复制兼容；文件路径解析与历史 fallback；下载文件名 RFC5987"},
-    {"version": "1.0.12", "date": "2025-02-07", "description": "FilePreview docx/文本预览与内网判断；Files/SpaceDetail 上传 customRequest；server files 与 encryption 融合参考实现"}
+    {"version": "1.0.11", "date": "2025-02-07", "description": "工作台移除桌面客户端下载；最近文件/空间文件分页与每页10/50/100；内容区局部滚动与随窗口变化；下载链接 token 与复制兼容；文件路径解析与历史 fallback；下载文件名 RFC5987；FilePreview docx/文本预览与内网判断；Files/SpaceDetail 上传 customRequest；server files 与 encryption 融合参考实现"}
   ]
 }
