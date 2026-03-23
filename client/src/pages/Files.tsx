@@ -14,6 +14,8 @@ import type { UploadProps } from 'antd'
 const { Option } = Select
 /** 根目录在 Select 中用空字符串表示，避免 antd 的 value 不能为 null 的警告 */
 const ROOT_FOLDER_VALUE = ''
+/** 超过该大小（50MB）时提示用户考虑使用大文件上传 */
+const LARGE_FILE_THRESHOLD_BYTES = 50 * 1024 * 1024
 
 // File System Access API 类型定义
 interface FileSystemFileHandle {
@@ -50,6 +52,7 @@ export default function Files() {
   const [renameForm] = Form.useForm()
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [chunkUploadVisible, setChunkUploadVisible] = useState(false)
+  const [chunkUploadPendingFile, setChunkUploadPendingFile] = useState<File | null>(null)
   const [uploadSpaceId, setUploadSpaceId] = useState<number | undefined>(undefined)
   const [uploadFolderId, setUploadFolderId] = useState<number | undefined>(undefined)
   const [chunkUploadSpaceId, setChunkUploadSpaceId] = useState<number | undefined>(undefined)
@@ -351,6 +354,24 @@ export default function Files() {
         message.error('文件大小不能超过10GB，请使用「大文件上传」')
         return false
       }
+      if (file.size >= LARGE_FILE_THRESHOLD_BYTES) {
+        return new Promise<boolean>((resolve) => {
+          Modal.confirm({
+            title: '选择上传方式',
+            content: `当前文件约 ${(file.size / 1024 / 1024).toFixed(1)} MB，建议使用「大文件上传」以获得断点续传。是否仍使用普通上传？`,
+            okText: '仍使用普通上传',
+            cancelText: '使用大文件上传',
+            onOk: () => resolve(true),
+            onCancel: () => {
+              setChunkUploadPendingFile(file)
+              setChunkUploadSpaceId(uploadSpaceId)
+              setChunkUploadFolderId(uploadFolderId ?? undefined)
+              setChunkUploadVisible(true)
+              resolve(false)
+            }
+          })
+        })
+      }
       return true
     }
   }
@@ -505,6 +526,7 @@ export default function Files() {
         open={chunkUploadVisible}
         onCancel={() => {
           setChunkUploadVisible(false)
+          setChunkUploadPendingFile(null)
           setChunkUploadSpaceId(undefined)
           setChunkUploadFolderId(undefined)
         }}
@@ -544,9 +566,12 @@ export default function Files() {
             messageApi={messageApi}
             spaceId={chunkUploadSpaceId}
             folderId={chunkUploadFolderId}
+            initialFile={chunkUploadPendingFile}
+            onInitialFileConsumed={() => setChunkUploadPendingFile(null)}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ['files'] })
               setChunkUploadVisible(false)
+              setChunkUploadPendingFile(null)
               setChunkUploadSpaceId(undefined)
               setChunkUploadFolderId(undefined)
             }}

@@ -22,10 +22,22 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
   const [textContent, setTextContent] = useState<string | null>(null) // 文本文件内容
   const [previewError, setPreviewError] = useState<string | null>(null) // 预览错误信息
   const [isLocalhostEnv, setIsLocalhostEnv] = useState(false) // 是否是本地环境
-  const [iframeLoadTimeout, setIframeLoadTimeout] = useState<NodeJS.Timeout | null>(null) // iframe 加载超时定时器
+  const [iframeLoadTimeout, setIframeLoadTimeout] = useState<ReturnType<typeof setTimeout> | null>(null) // iframe 加载超时定时器
+  const [previewPollIntervalMs, setPreviewPollIntervalMs] = useState(2000)
+  const [presentationPollCount, setPresentationPollCount] = useState(0)
   const docxContainerRef = useRef<HTMLDivElement>(null)
   const [docxLoading, setDocxLoading] = useState(false)
   const { token } = useAuthStore()
+
+  const setPresentationConvertingState = (downloadUrl?: string) => {
+    setPreviewType('presentation-converting')
+    setPreviewUrl('converting')
+    setPreviewable(true)
+    setPreviewError(null)
+    setActualMimeType('application/pdf')
+    setDownloadUrl(downloadUrl || `/api/files/download/${fileId}`)
+    setPreviewPollIntervalMs(2000)
+  }
 
   useEffect(() => {
     if (visible && fileId) {
@@ -44,6 +56,8 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       setPreviewError(null)
       setTextContent(null)
       setIsLocalhostEnv(false)
+      setPreviewPollIntervalMs(2000)
+      setPresentationPollCount(0)
     }
 
     // 清理函数：组件卸载或依赖变化时清理
@@ -54,7 +68,7 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
         }
         return null
       })
-      setIframeLoadTimeout((timeout) => {
+      setIframeLoadTimeout((timeout: ReturnType<typeof setTimeout> | null) => {
         if (timeout) {
           clearTimeout(timeout)
         }
@@ -103,6 +117,27 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
     }
   }, [visible, previewType, renderDocx])
 
+  useEffect(() => {
+    if (!visible || previewType !== 'presentation-converting' || !fileId) {
+      return
+    }
+
+    if (presentationPollCount >= 30) {
+      setPreviewable(false)
+      setPreviewUrl(null)
+      setPreviewType(null)
+      setPreviewError('PPT/PPTX 转换耗时较长，请稍后再试或下载后查看')
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      setPresentationPollCount((count) => count + 1)
+      void loadPreview()
+    }, previewPollIntervalMs)
+
+    return () => clearTimeout(timeout)
+  }, [visible, previewType, fileId, previewPollIntervalMs, presentationPollCount])
+
   const loadPreview = async () => {
     if (!fileId) return
 
@@ -113,8 +148,21 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
     setIsLocalhostEnv(false)
     setPreviewType(null)
     setTextContent(null)
+    setPreviewPollIntervalMs(2000)
     setLoading(true)
     try {
+      const extFromFileName = fileName?.toLowerCase().split('.').pop() || ''
+      const isPresentationFile = extFromFileName === 'ppt' || extFromFileName === 'pptx'
+      if (extFromFileName === 'docx') {
+        setPreviewType('docx')
+        setPreviewUrl('docx')
+        setPreviewable(true)
+        setActualMimeType(mimeType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        setDownloadUrl(`/api/files/download/${fileId}`)
+        setLoading(false)
+        return
+      }
+
       const response = await fetch(`/api/files/preview/${fileId}`, {
         headers: {
           Authorization: `Bearer ${token}`
@@ -132,6 +180,27 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       if (contentType.includes('application/json')) {
         const data = await response.json()
         if (data.success && data.data) {
+          const currentFileExt = (fileName || data.data.fileName || '').toLowerCase().split('.').pop()
+
+          // .docx 始终优先使用本地渲染，即使后端仍返回“不支持预览”的旧格式也兜底处理
+          if (currentFileExt === 'docx') {
+            setPreviewType('docx')
+            setPreviewUrl('docx')
+            setPreviewable(true)
+            setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
+            setActualMimeType(data.data.mimeType || mimeType || null)
+            setLoading(false)
+            return
+          }
+
+          if (data.data.previewType === 'presentation-converting') {
+            setPresentationConvertingState(data.data.downloadUrl || `/api/files/download/${fileId}`)
+            setPreviewPollIntervalMs(data.data.pollIntervalMs || 2000)
+            setPresentationPollCount((count) => count)
+            setLoading(false)
+            return
+          }
+
           // 如果是Office文档，使用在线预览服务
           if (data.data.previewType === 'office') {
             const previewUrlVal = data.data.previewUrl || ''
@@ -142,14 +211,8 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
               /https?:\/\/192\.168\.\d{1,3}\.\d{1,3}/.test(previewUrlVal)
 
             if (isUnreachable) {
-              // .docx 文件：使用 docx-preview 本地渲染
-              const currentFileExt = (fileName || data.data.fileName || '').toLowerCase().split('.').pop()
-              if (currentFileExt === 'docx') {
-                setPreviewType('docx')
-                setPreviewUrl('docx')
-                setPreviewable(true)
-                setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
-                setActualMimeType(data.data.mimeType || null)
+              if (isPresentationFile) {
+                setPresentationConvertingState(data.data.downloadUrl || `/api/files/download/${fileId}`)
                 setLoading(false)
                 return
               }
@@ -201,6 +264,11 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
                 setPreviewType('office')
                 setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
               } else {
+                if (isPresentationFile) {
+                  setPresentationConvertingState(data.data.downloadUrl || `/api/files/download/${fileId}`)
+                  setLoading(false)
+                  return
+                }
                 setPreviewable(false)
                 setPreviewError('无法获取预览服务')
                 setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
@@ -208,6 +276,11 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
               }
             }
           } else {
+            if (isPresentationFile) {
+              setPresentationConvertingState(data.data.downloadUrl || `/api/files/download/${fileId}`)
+              setLoading(false)
+              return
+            }
             setPreviewable(false)
             setDownloadUrl(data.data.downloadUrl || `/api/files/download/${fileId}`)
             message.info(data.data.message || '该文件类型不支持在线预览')
@@ -260,6 +333,12 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
         setPreviewUrl(url)
         setPreviewable(true)
       } else {
+        if (isPresentationFile) {
+          URL.revokeObjectURL(url)
+          setPresentationConvertingState(`/api/files/download/${fileId}`)
+          setLoading(false)
+          return
+        }
         URL.revokeObjectURL(url)
         setPreviewUrl(null)
         setPreviewable(false)
@@ -280,6 +359,17 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
       message.error('未登录，请先登录')
       return
     }
+    Modal.confirm({
+      title: '下载提示',
+      content: '下载的文件需要根据客户实际情况和主胶片最新版本进行更新！',
+      okText: '确定下载',
+      cancelText: '取消',
+      onOk: () => doDownload()
+    })
+  }
+
+  const doDownload = async () => {
+    if (!fileId) return
     const hide = message.loading('正在准备下载，请稍候...', 0)
     try {
       const response = await fetch(`/api/files/download/${fileId}`, {
@@ -336,7 +426,7 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
           关闭
         </Button>
       ]}
-      width={isPdf || isOfficeWithViewer || previewType === 'text' || previewType === 'docx' ? '90%' : 'auto'}
+      width={isPdf || isOfficeWithViewer || previewType === 'text' || previewType === 'docx' || previewType === 'presentation-converting' ? '90%' : 'auto'}
       style={{ top: 20 }}
       styles={{
         body: {
@@ -417,6 +507,11 @@ export default function FilePreview({ fileId, fileName, mimeType, visible, onClo
                   padding: 0
                 }}
               />
+            </div>
+          ) : previewType === 'presentation-converting' ? (
+            <div style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 16, backgroundColor: '#fff' }}>
+              <Spin size="large" />
+              <div style={{ color: '#666' }}>正在将 PPT/PPTX 转换为 PDF，首次预览可能需要一些时间...</div>
             </div>
           ) : previewType === 'text' && textContent != null ? (
             <pre

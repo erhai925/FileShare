@@ -17,7 +17,8 @@
 - `upgrade-v1.0.7-to-v1.0.8.js` - 从 v1.0.7 升级到 v1.0.8（空间卡片、大文件上传、分块上传）
 - `upgrade-v1.0.8-to-v1.0.9.js` - 从 v1.0.8 升级到 v1.0.9（时区、上传文案）
 - `upgrade-v1.0.9-to-v1.0.10.js` - 从 v1.0.9 升级到 v1.0.10（空间大文件上传、永久删除等）
-- `upgrade-v1.0.10-to-v1.0.11.js` - 从 v1.0.10 升级到 v1.0.11（分页与局部滚动、下载链接 token、FilePreview 融合、上传 customRequest 等，**当前默认**）
+- `upgrade-v1.0.10-to-v1.0.11.js` - 从 v1.0.10 升级到 v1.0.11（分页与局部滚动、下载链接 token、FilePreview 融合、上传 customRequest 等）
+- `upgrade-v1.0.11-to-v1.0.12.js` - 从 v1.0.11 升级到 v1.0.12（office-preview 稳定性、文件夹文件数、下载提示、备份超时与压缩、大文件切换免重选，**当前默认**）
 
 ## 升级脚本结构
 
@@ -31,7 +32,7 @@
 ## 运行升级脚本
 
 ```bash
-# 运行最新升级脚本（推荐）：从 v1.0.10 升级到 v1.0.11
+# 运行最新升级脚本（推荐）：从 v1.0.11 升级到 v1.0.12
 npm run upgrade
 
 # 或运行特定版本的升级脚本
@@ -43,14 +44,15 @@ npm run upgrade:1.0.7   # v1.0.6 -> v1.0.7
 npm run upgrade:1.0.8   # v1.0.7 -> v1.0.8
 npm run upgrade:1.0.9   # v1.0.8 -> v1.0.9
 npm run upgrade:1.0.10  # v1.0.9 -> v1.0.10
-npm run upgrade:1.0.11  # v1.0.10 -> v1.0.11（与 npm run upgrade 相同）
+npm run upgrade:1.0.11  # v1.0.10 -> v1.0.11
+npm run upgrade:1.0.12  # v1.0.11 -> v1.0.12（与 npm run upgrade 相同）
 npm run upgrade:1.0.9-from-1.0.7  # v1.0.7/1.0.8 直接到 v1.0.9
 npm run upgrade:latest [路径]     # 强制升级到最新版本（不校验当前版本，直接覆盖）
 ```
 
 **强制升级到最新**：若希望**不校验当前版本、直接将 version.json 标为最新版本**（版本号相同也会重新覆盖），请使用 `npm run upgrade:latest` 或 `npm run upgrade:latest -- /您的部署根目录`。会先询问或使用参数中的更新路径，再写入最新版本号。
 
-**说明**：`npm run upgrade` 默认执行当前最新的升级脚本（v1.0.10 → v1.0.11）。脚本会**先询问更新路径**（当前运行系统的项目根目录），待输入后从该路径下的 `upgrades/version.json` 读取当前版本号，再执行升级；这样无论从哪个目录执行脚本，都能对“正在运行”的部署目录正确升级。若直接回车则使用脚本所在项目的根目录。若当前版本不是 v1.0.10，请使用对应的 `npm run upgrade:x.x.x` 或先升级到 v1.0.10 再执行 `npm run upgrade`。
+**说明**：`npm run upgrade` 默认执行当前最新的升级脚本（v1.0.11 → v1.0.12）。脚本会**先询问更新路径**（当前运行系统的项目根目录），待输入后从该路径下的 `upgrades/version.json` 读取当前版本号，再执行升级；这样无论从哪个目录执行脚本，都能对“正在运行”的部署目录正确升级。若直接回车则使用脚本所在项目的根目录。若当前版本不是 v1.0.11，请使用对应的 `npm run upgrade:x.x.x` 或先逐级升级到 v1.0.11 再执行 `npm run upgrade`。
 
 ## v1.0.3 升级脚本说明
 
@@ -132,6 +134,18 @@ npm run upgrade:latest [路径]     # 强制升级到最新版本（不校验当
 4. 完成脚本后：在**更新路径**下执行 `git pull`，在 `client` 目录执行 `npm install`（含 docx-preview）、`npm run client:build`，最后重启服务。
 
 这样即使从拉取的新代码目录执行升级（该目录下 version.json 可能已是 1.0.11），只要更新路径指向仍为 v1.0.10 的部署目录，即可正确对该部署做版本号升级。
+
+## v1.0.12 升级脚本说明
+
+`upgrade-v1.0.11-to-v1.0.12.js` 无数据库结构变更，包含：
+
+- **稳定性**：PPT/PPTX 转 PDF 失败（如未安装 LibreOffice）时不再导致 Node 进程崩溃
+- **空间详情**：上传后刷新文件夹列表，文件夹树「x 个文件」数量及时更新
+- **下载**：下载前统一弹窗提示（主胶片与客户实际情况）
+- **管理后台**：备份/恢复 HTTP 超时 30 分钟；备份 zip 压缩 zlib level 6
+- **大文件上传**：从普通上传提示切换到大文件上传时，自动使用已选文件，无需再次选择
+
+**升级步骤**：与 v1.0.11 类似，执行 `npm run upgrade`（或 `npm run upgrade:1.0.12`），更新路径指向部署根目录；当前版本须为 v1.0.11，脚本将写入 v1.0.12。完成后 `git pull`、前端 `npm install` 与 `npm run client:build`、重启服务。
 
 ## 注意事项
 

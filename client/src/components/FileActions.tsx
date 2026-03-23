@@ -1,4 +1,4 @@
-import { Button, Space, Popconfirm } from 'antd'
+import { Button, Space, Popconfirm, Modal } from 'antd'
 import { FileTextOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
@@ -73,7 +73,15 @@ export default function FileActions({
         <Button
           type="link"
           size="small"
-          onClick={() => onDownload(record.id, record.original_name)}
+          onClick={() => {
+            Modal.confirm({
+              title: '下载提示',
+              content: '下载的文件需要根据客户实际情况和主胶片最新版本进行更新！',
+              okText: '确定下载',
+              cancelText: '取消',
+              onOk: () => onDownload(record.id, record.original_name)
+            })
+          }}
         >
           下载
         </Button>

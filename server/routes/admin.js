@@ -305,7 +305,7 @@ router.post('/backup', authenticate, requireAdmin, async (req, res) => {
     const backupPath = path.join(backupDir, `${backupName}.zip`);
 
     const output = require('fs').createWriteStream(backupPath);
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = archiver('zip', { zlib: { level: 6 } });
 
     const finishPromise = new Promise((resolve, reject) => {
       output.on('close', () => resolve());

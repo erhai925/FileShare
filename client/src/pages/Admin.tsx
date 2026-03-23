@@ -572,8 +572,9 @@ function BackupSettings() {
     queryKey: ['admin-backups'],
     queryFn: () => api.get('/admin/backups')
   })
+  // 12GB+ 存储且使用最高压缩时，备份可能需 15–30 分钟，超时设为 30 分钟
   const backupMutation = useMutation({
-    mutationFn: () => api.post('/admin/backup'),
+    mutationFn: () => api.post('/admin/backup', {}, { timeout: 1800000 }),
     onSuccess: () => {
       message.success('备份完成')
       refetch()
@@ -583,7 +584,7 @@ function BackupSettings() {
     }
   })
   const restoreMutation = useMutation({
-    mutationFn: (filename: string) => api.post('/admin/backups/restore', { filename }),
+    mutationFn: (filename: string) => api.post('/admin/backups/restore', { filename }, { timeout: 1800000 }),
     onSuccess: () => {
       message.success('数据恢复成功，请刷新页面')
       refetch()

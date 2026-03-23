@@ -6,7 +6,7 @@
  * 不校验当前版本号：无论当前是何种版本，都会将 upgrades/version.json 的 currentVersion 设为最新版本并写入。
  * 若升级历史中尚无最新版本记录，会追加一条。适用于“重新覆盖升级一次”或从任意版本直接标为最新。
  *
- * 当前最新版本：v1.0.11
+ * 当前最新版本：v1.0.12
  * 使用方式：npm run upgrade:latest [更新路径]
  * 或：node upgrades/upgrade-to-latest.js [更新路径]
  */
@@ -15,8 +15,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const readline = require('readline');
 
-const LATEST_VERSION = '1.0.11';
-const LATEST_DESCRIPTION = '工作台移除桌面客户端下载；最近文件/空间文件分页与每页10/50/100；内容区局部滚动与随窗口变化；下载链接 token 与复制兼容；文件路径解析与历史 fallback；下载文件名 RFC5987；FilePreview docx/文本预览与内网判断；Files/SpaceDetail 上传 customRequest；server files 与 encryption 融合参考实现';
+const LATEST_VERSION = '1.0.12';
+const LATEST_DESCRIPTION = 'office-preview 失败不崩溃；文件夹上传后文件数刷新；下载前主胶片与客户实际情况提示；管理后台备份/恢复超时30分钟、备份压缩level6；普通上传切大文件上传时自动使用已选文件';
 
 const getVersionFilePath = (projectRoot) => path.join(projectRoot || path.resolve(__dirname, '..'), 'upgrades', 'version.json');
 const defaultProjectRoot = path.resolve(__dirname, '..');
@@ -47,13 +47,16 @@ function log(message, color = 'reset') {
 }
 
 async function forceUpgradeToLatest(projectRoot) {
-  const versionFile = getVersionFilePath(projectRoot);
+  const versionFile = path.resolve(getVersionFilePath(projectRoot));
   let versionInfo;
   try {
     const content = await fs.readFile(versionFile, 'utf8');
     versionInfo = JSON.parse(content);
   } catch (e) {
     throw new Error(`读取或解析 version.json 失败: ${e.message}`);
+  }
+  if (!versionInfo || typeof versionInfo !== 'object') {
+    throw new Error('version.json 格式异常，需包含 currentVersion 或 upgradeHistory');
   }
 
   const oldVersion = versionInfo.currentVersion || '未知';
@@ -69,7 +72,11 @@ async function forceUpgradeToLatest(projectRoot) {
     });
   }
 
-  await fs.writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf8');
+  try {
+    await fs.writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf8');
+  } catch (e) {
+    throw new Error(`写入 version.json 失败: ${e.message}`);
+  }
   log(`版本已覆盖为最新: v${oldVersion} -> v${LATEST_VERSION}`, 'green');
 }
 
@@ -84,17 +91,16 @@ async function main() {
   if (argPath && argPath.trim()) {
     projectRoot = path.resolve(argPath.trim());
     log(`使用命令行参数作为更新路径: ${projectRoot}\n`, 'blue');
-  } else {
+  } else if (process.stdin.isTTY) {
     const defaultHint = defaultProjectRoot;
     const inputPath = await ask(`请输入更新路径（项目根目录，将在此路径的 upgrades/version.json 写入最新版本）\n[直接回车使用默认: ${defaultHint}]: `);
     projectRoot = inputPath.trim() ? path.resolve(inputPath.trim()) : defaultProjectRoot;
-  }
-  if (!argPath && !process.stdin.isTTY && projectRoot === defaultProjectRoot) {
-    log(`未检测到交互终端且未传入路径参数，使用默认更新路径: ${projectRoot}`, 'yellow');
+  } else {
+    log(`未传入路径参数且非交互终端，使用默认更新路径: ${projectRoot}`, 'yellow');
     log(`若需指定其他路径，请使用: npm run upgrade:latest -- /您的部署根目录\n`, 'yellow');
   }
 
-  const versionFile = getVersionFilePath(projectRoot);
+  const versionFile = path.resolve(getVersionFilePath(projectRoot));
   try {
     await fs.access(versionFile);
   } catch (e) {
@@ -119,17 +125,17 @@ async function main() {
   }
 
   log('\n本次更新内容（v' + LATEST_VERSION + '）：', 'yellow');
-  log('1. 工作台移除桌面客户端下载；最近文件/空间文件分页与每页 10/50/100');
-  log('2. 内容区局部滚动，列表高度随窗口变化');
-  log('3. 复制下载链接支持 token，无 clipboard 时降级复制');
-  log('4. 文件路径多候选根与历史 fallback；下载文件名 RFC5987');
-  log('5. FilePreview：.docx 本地预览、内网判断、文本预览；Files/SpaceDetail 上传 customRequest');
-  log('6. server files.js / encryption.js 与参考实现融合');
-  log('\n请在该更新路径下执行 git pull 拉取最新代码，在 client 目录执行 npm install（含 docx-preview），再执行 npm run client:build 构建前端，最后重启服务。', 'yellow');
+  log('1. PPT 预览失败不导致 Node 进程崩溃');
+  log('2. 上传后文件夹「x 个文件」数量及时更新');
+  log('3. 下载前提示（主胶片/客户实际情况）');
+  log('4. 管理后台备份/恢复超时 30 分钟，备份压缩 level 6');
+  log('5. 普通上传切大文件上传时自动使用已选文件');
+  log('\n请在该更新路径下执行 git pull 拉取最新代码，在 client 目录执行 npm install，再执行 npm run client:build 构建前端，最后重启服务。', 'yellow');
   log('');
 }
 
 main().catch((err) => {
-  console.error(err);
+  log(`执行失败: ${err.message}`, 'red');
+  if (err.stack) console.error(err.stack);
   process.exit(1);
 });

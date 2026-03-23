@@ -252,9 +252,17 @@ export default function FileDetail() {
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
           返回
         </Button>
-        <Button 
-          icon={<DownloadOutlined />} 
-          onClick={() => downloadFile(fileId!, file.original_name)}
+        <Button
+          icon={<DownloadOutlined />}
+          onClick={() => {
+            Modal.confirm({
+              title: '下载提示',
+              content: '下载的文件需要根据客户实际情况和主胶片最新版本进行更新！',
+              okText: '确定下载',
+              cancelText: '取消',
+              onOk: () => downloadFile(fileId!, file.original_name)
+            })
+          }}
         >
           下载
         </Button>

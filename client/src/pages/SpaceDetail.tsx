@@ -14,6 +14,8 @@ import type { DataNode } from 'antd/es/tree'
 
 const { Option } = Select
 const { Title } = Typography
+/** 超过该大小（50MB）时提示用户考虑使用大文件上传 */
+const LARGE_FILE_THRESHOLD_BYTES = 50 * 1024 * 1024
 
 export default function SpaceDetail() {
   const { spaceId } = useParams<{ spaceId: string }>()
@@ -46,6 +48,7 @@ export default function SpaceDetail() {
   const [batchFileIds, setBatchFileIds] = useState<number[]>([])
   const [moveSubmitting, setMoveSubmitting] = useState(false)
   const [chunkUploadVisible, setChunkUploadVisible] = useState(false)
+  const [chunkUploadPendingFile, setChunkUploadPendingFile] = useState<File | null>(null)
   const [spaceFilePage, setSpaceFilePage] = useState(1)
   const [spaceFilePageSize, setSpaceFilePageSize] = useState(50)
   const [folderFilePage, setFolderFilePage] = useState(1)
@@ -279,6 +282,7 @@ export default function SpaceDetail() {
         if (response?.success) {
           message.success(response.message || `${info.file.name} 上传成功`)
           refetchSpaceDetail()
+          refetchFolders()
           refetchFileTree()
           if (selectedFolderId) {
             refetchFolderFiles()
@@ -299,8 +303,24 @@ export default function SpaceDetail() {
     beforeUpload: (file) => {
       const isLt10GB = file.size / 1024 / 1024 / 1024 < 10
       if (!isLt10GB) {
-        message.error('文件大小不能超过10GB')
+        message.error('文件大小不能超过10GB，请使用「大文件上传」')
         return false
+      }
+      if (file.size >= LARGE_FILE_THRESHOLD_BYTES) {
+        return new Promise<boolean>((resolve) => {
+          Modal.confirm({
+            title: '选择上传方式',
+            content: `当前文件约 ${(file.size / 1024 / 1024).toFixed(1)} MB，建议使用「大文件上传」以获得断点续传。是否仍使用普通上传？`,
+            okText: '仍使用普通上传',
+            cancelText: '使用大文件上传',
+            onOk: () => resolve(true),
+            onCancel: () => {
+              setChunkUploadPendingFile(file)
+              setChunkUploadVisible(true)
+              resolve(false)
+            }
+          })
+        })
       }
       return true
     }
@@ -1548,16 +1568,23 @@ export default function SpaceDetail() {
       <Modal
         title="大文件上传（分块上传，支持断点续传）"
         open={chunkUploadVisible}
-        onCancel={() => setChunkUploadVisible(false)}
+        onCancel={() => {
+          setChunkUploadVisible(false)
+          setChunkUploadPendingFile(null)
+        }}
         footer={null}
         width={520}
       >
         <ChunkUpload
           spaceId={spaceIdNum ?? undefined}
           folderId={selectedFolderId ?? undefined}
+          initialFile={chunkUploadPendingFile}
+          onInitialFileConsumed={() => setChunkUploadPendingFile(null)}
           onSuccess={() => {
             setChunkUploadVisible(false)
+            setChunkUploadPendingFile(null)
             refetchSpaceDetail()
+            refetchFolders()
             refetchFileTree()
             if (selectedFolderId) refetchFolderFiles()
             queryClient.invalidateQueries({ queryKey: ['files'] })

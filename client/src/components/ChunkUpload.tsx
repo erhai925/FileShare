@@ -28,9 +28,13 @@ interface ChunkUploadProps {
   chunkSize?: number // 分块大小，默认5MB
   /** 由父组件传入可避免 Modal 内 useApp() 取不到 context 导致无响应 */
   messageApi?: MessageInstance
+  /** 从普通上传切到大文件上传时传入已选文件，无需用户再次选择 */
+  initialFile?: File | null
+  /** 已消费 initialFile 时回调，便于父组件清空 */
+  onInitialFileConsumed?: () => void
 }
 
-export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 5 * 1024 * 1024, messageApi }: ChunkUploadProps) {
+export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 5 * 1024 * 1024, messageApi, initialFile, onInitialFileConsumed }: ChunkUploadProps) {
   let message: MessageInstance
   try {
     message = messageApi ?? App.useApp().message
@@ -47,6 +51,14 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
   const uploadingRef = useRef(false)
   const pausedRef = useRef(false)
   useEffect(() => { pausedRef.current = paused }, [paused])
+
+  // 从普通上传切过来时自动开始上传已选文件，无需用户再选一次
+  useEffect(() => {
+    if (!initialFile || uploadingRef.current) return
+    const file = initialFile
+    onInitialFileConsumed?.()
+    handleUpload(file).catch(() => {})
+  }, [initialFile])
 
   // 按索引取第 i 块（避免大文件一次性 slice 全部分块阻塞主线程）
   const getChunk = (file: File, chunkSize: number, index: number): Blob => {

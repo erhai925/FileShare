@@ -1,11 +1,13 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const fsSync = require('fs');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 const { authenticate, checkPermission, getBatchFilePermissions } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
 const { encryptFile, encryptFileStreaming, decryptFile, generateHash, getEncryptionMode, generateToken } = require('../utils/encryption');
+const { enqueuePresentationToPdf, getPresentationPreviewStatus } = require('../utils/office-preview');
 const db = require('../config/database');
 
 const router = express.Router();
@@ -24,6 +26,39 @@ function setAttachmentDisposition(res, originalName) {
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 10737418240; // 10GB
 // 单次表单上传建议上限，超过则引导使用分块上传，避免大文件读入内存导致宕机
 const SINGLE_UPLOAD_MAX = parseInt(process.env.SINGLE_UPLOAD_MAX) || 50 * 1024 * 1024; // 50MB
+
+function isPresentationFile(fileName, mimeType) {
+  const ext = path.extname(fileName || '').toLowerCase();
+  return ['.ppt', '.pptx'].includes(ext) ||
+    (mimeType || '').includes('powerpoint') ||
+    (mimeType || '').includes('presentation');
+}
+
+function preconvertPresentationInBackground({ sourceBuffer, sourceExt, fileHash, originalName }) {
+  if (!sourceBuffer || !isPresentationFile(originalName, '')) {
+    return;
+  }
+
+  enqueuePresentationToPdf({ sourceBuffer, sourceExt, fileHash, originalName })
+    .catch((error) => {
+      console.warn('PPT/PPTX 预转换任务启动失败:', error && error.message ? error.message : error);
+    });
+}
+
+async function sendPdfPreviewStream(res, pdfPath) {
+  const stat = await fs.stat(pdfPath);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Length', stat.size);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+
+  await new Promise((resolve, reject) => {
+    const stream = fsSync.createReadStream(pdfPath);
+    stream.on('error', reject);
+    res.on('close', resolve);
+    res.on('finish', resolve);
+    stream.pipe(res);
+  });
+}
 
 // 获取存储路径的辅助函数（异步）
 async function getStoragePathAsync() {
@@ -411,6 +446,13 @@ router.post('/upload', authenticate, (req, res, next) => {
         fileName: originalFileName,
         fileSize: file.size
       }
+    });
+
+    preconvertPresentationInBackground({
+      sourceBuffer: fileBuffer,
+      sourceExt: path.extname(originalFileName).toLowerCase(),
+      fileHash,
+      originalName: originalFileName
     });
   } catch (error) {
     console.error('文件上传失败 - 详细错误信息:');
@@ -1620,7 +1662,6 @@ router.post('/upload/complete', authenticate, async (req, res) => {
     const chunksDir = path.join(storagePath, 'temp', 'chunks', uploadId);
     const finalFilePath = path.join(storagePath, 'temp', `merged-${uploadId}-${Date.now()}`);
 
-    const fsSync = require('fs');
     const writeStream = fsSync.createWriteStream(finalFilePath);
 
     // 按顺序合并所有分块
@@ -1689,6 +1730,9 @@ router.post('/upload/complete', authenticate, async (req, res) => {
       [result.lastID, upload.id]
     );
 
+    const shouldPreconvertPresentation = isPresentationFile(originalFileName, upload.mime_type);
+    const preconvertBufferPromise = shouldPreconvertPresentation ? fs.readFile(finalFilePath) : null;
+
     // 清理临时文件
     try {
       await fs.unlink(finalFilePath);
@@ -1713,6 +1757,21 @@ router.post('/upload/complete', authenticate, async (req, res) => {
         fileSize: upload.file_size
       }
     });
+
+    if (preconvertBufferPromise) {
+      preconvertBufferPromise
+        .then((buffer) => {
+          preconvertPresentationInBackground({
+            sourceBuffer: buffer,
+            sourceExt: path.extname(originalFileName).toLowerCase(),
+            fileHash,
+            originalName: originalFileName
+          });
+        })
+        .catch((error) => {
+          console.warn('读取分块上传文件用于预转换失败:', error && error.message ? error.message : error);
+        });
+    }
   } catch (error) {
     console.error('完成上传失败:', error);
     console.error('完成上传失败 - 堆栈:', error.stack);
@@ -1830,8 +1889,8 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     }
 
     let mimeType = file.mime_type || 'application/octet-stream';
+    const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
     if (!file.mime_type || file.mime_type === 'application/octet-stream') {
-      const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
       const mimeTypes = {
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
@@ -1856,9 +1915,11 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     
     const isImage = mimeType.startsWith('image/');
     const isPdf = mimeType === 'application/pdf';
-    
-    // 获取文件扩展名用于辅助判断
-    const fileExt = path.extname(file.original_name || file.name || '').toLowerCase();
+    const textExts = new Set(['.txt', '.md', '.markdown', '.json', '.xml', '.html', '.htm', '.css', '.js', '.log', '.csv', '.ini', '.conf', '.yml', '.yaml']);
+    const isText = mimeType.startsWith('text/') ||
+      ['application/json', 'application/xml', 'application/javascript'].includes(mimeType) ||
+      textExts.has(fileExt);
+    const isPresentation = ['.ppt', '.pptx'].includes(fileExt);
     
     // 判断是否为 Office 文档（通过 MIME 类型或文件扩展名）
     const isOffice = mimeType.includes('word') || 
@@ -1884,12 +1945,62 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     res.setHeader('Content-Type', mimeType);
     res.setHeader('Content-Length', decryptedBuffer.length);
     
-    // 对于图片和PDF，直接返回
-    if (isImage || isPdf) {
+    // 对于图片、PDF 和文本文件，直接返回文件内容给前端渲染
+    if (isImage || isPdf || isText) {
       // 设置缓存头
       res.setHeader('Cache-Control', 'public, max-age=3600');
       res.send(decryptedBuffer);
       return;
+    }
+
+    // 内网场景：PPT/PPTX 优先在服务端转换成 PDF，再复用现有 PDF 预览
+    if (isPresentation) {
+      try {
+        const conversionStatus = await getPresentationPreviewStatus({
+          sourceBuffer: decryptedBuffer,
+          fileHash: file.hash
+        });
+
+        if (conversionStatus.status === 'ready' && conversionStatus.pdfPath) {
+          await sendPdfPreviewStream(res, conversionStatus.pdfPath);
+          return;
+        }
+
+        const queued = await enqueuePresentationToPdf({
+          sourceBuffer: decryptedBuffer,
+          sourceExt: fileExt,
+          fileHash: file.hash,
+          originalName: file.original_name || file.name || `source${fileExt}`
+        });
+
+        return res.json({
+          success: true,
+          data: {
+            fileId: file.id,
+            fileName: file.original_name,
+            mimeType: 'application/pdf',
+            previewable: true,
+            previewType: 'presentation-converting',
+            conversionStatus: queued.status,
+            pollIntervalMs: 2000,
+            message: '正在将 PPT/PPTX 转换为 PDF，请稍候...',
+            downloadUrl: `/api/files/download/${fileId}`
+          }
+        });
+      } catch (error) {
+        console.error('PPT/PPTX 转 PDF 预览失败:', error);
+        return res.json({
+          success: true,
+          data: {
+            fileId: file.id,
+            fileName: file.original_name,
+            mimeType: mimeType,
+            previewable: false,
+            message: error.message || 'PPT/PPTX 转 PDF 失败，请下载后查看',
+            downloadUrl: `/api/files/download/${fileId}`
+          }
+        });
+      }
     }
     
     // 对于Office文档，创建临时预览URL并使用在线预览服务
