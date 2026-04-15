@@ -156,6 +156,21 @@ app.use((req, res) => {
 // 启动服务器
 async function startServer() {
   try {
+    // 检查 JWT_SECRET 是否为默认值
+    const jwtSecret = process.env.JWT_SECRET;
+    const dangerousDefaults = ['default-secret', 'your-super-secret-jwt-key-change-in-production', undefined, ''];
+    if (dangerousDefaults.includes(jwtSecret)) {
+      console.error('============================================================');
+      console.error('  严重安全警告: JWT_SECRET 未配置或仍为默认值！');
+      console.error('  请在 .env 中设置一个强随机字符串，例如:');
+      console.error('  JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'));
+      console.error('============================================================');
+      if (process.env.NODE_ENV === 'production') {
+        console.error('生产环境禁止使用默认 JWT_SECRET，服务器拒绝启动。');
+        process.exit(1);
+      }
+    }
+
     // 初始化数据库
     await db.init();
     console.log('数据库初始化成功');

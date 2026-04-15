@@ -60,11 +60,6 @@ async function sendPdfPreviewStream(res, pdfPath) {
   });
 }
 
-// 获取存储路径的辅助函数（异步）
-async function getStoragePathAsync() {
-  return await getStoragePath();
-}
-
 /** 候选存储根（当前配置 + 项目 storage + 可配置 fallback） */
 async function getCandidateStorageRoots() {
   const roots = [];
@@ -267,24 +262,6 @@ router.post('/upload', authenticate, (req, res, next) => {
       console.warn('文件名编码转换失败，使用原始文件名:', error);
       originalFileName = file.originalname;
     }
-    
-    // 处理文件名编码，确保中文正确显示（用于日志）
-    const originalName = req.file?.originalname || '';
-    const decodedName = Buffer.from(originalName, 'latin1').toString('utf8');
-    
-    console.log('文件上传请求接收:', {
-      hasFile: !!req.file,
-      fileInfo: req.file ? {
-        originalname: decodedName,
-        originalnameEncoded: originalName,
-        size: req.file.size,
-        mimetype: req.file.mimetype,
-        path: req.file.path
-      } : null,
-      userId: req.user?.id,
-      body: req.body,
-      willStoreAs: originalFileName // 显示将要存储到数据库的文件名
-    });
     
     // 检查权限（如果有指定spaceId，需要检查权限；否则允许上传到默认位置）
     if (spaceId) {
@@ -531,9 +508,17 @@ router.post('/download-token', authenticate, async (req, res) => {
     }
     const raw = generateToken(24);
     const expiresAt = Date.now() + 60 * 60 * 1000; // 1 小时
-    if (!global.downloadTokens) global.downloadTokens = new Map();
+    if (!global.downloadTokens) {
+      global.downloadTokens = new Map();
+      // 定期清理过期 token（每 10 分钟），避免每个 token 各自 setTimeout 导致 timer 积压
+      setInterval(() => {
+        const now = Date.now();
+        for (const [k, v] of global.downloadTokens) {
+          if (now > v.expiresAt) global.downloadTokens.delete(k);
+        }
+      }, 10 * 60 * 1000).unref();
+    }
     global.downloadTokens.set(raw, { fileId: Number(fileId), userId: req.user.id, expiresAt });
-    setTimeout(() => global.downloadTokens && global.downloadTokens.delete(raw), 60 * 60 * 1000);
     res.json({ success: true, data: { token: raw, expiresIn: 3600 } });
   } catch (err) {
     console.error('生成下载 token 失败:', err);
@@ -555,36 +540,23 @@ router.get('/download/:fileId', authenticateOrDownloadToken, async (req, res) =>
     
     // 检查权限
     let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
-    console.log('下载文件 - 文件级权限检查结果:', hasPermission);
-    
+
     // 如果文件级权限检查失败，检查空间权限
-    if (!hasPermission) {
-      const fileRow = await db.get('SELECT space_id FROM files WHERE id = ?', [fileId]);
-      if (fileRow && fileRow.space_id) {
-        console.log('下载文件 - 检查空间权限, space_id:', fileRow.space_id);
-        hasPermission = await checkPermission(req.user.id, 'space', fileRow.space_id, 'read');
-        console.log('下载文件 - 空间权限检查结果:', hasPermission);
-        
-        // 如果用户是空间所有者，也应该有权限
-        if (!hasPermission) {
-          const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [fileRow.space_id]);
-          if (space && space.owner_id === req.user.id) {
-            hasPermission = true;
-            console.log('下载文件 - 用户是空间所有者，授予权限');
-          }
+    if (!hasPermission && file.space_id) {
+      hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
+
+      // 如果用户是空间所有者，也应该有权限
+      if (!hasPermission) {
+        const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+        if (space && space.owner_id === req.user.id) {
+          hasPermission = true;
         }
       }
     }
-    
-    console.log('下载文件 - 最终权限检查结果:', hasPermission);
+
     if (!hasPermission) {
-      console.log('下载文件 - 无权限访问');
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
-    
-    // 下载权限检查：默认允许下载
-    // 如果需要实现"禁止下载"功能，可以在权限表中设置特殊标记
-    // 目前简化处理：有read权限就可以下载
 
     const resolvedPath = await resolveFilePath(file);
     if (!resolvedPath) {
@@ -592,44 +564,86 @@ router.get('/download/:fileId', authenticateOrDownloadToken, async (req, res) =>
       return res.status(404).json({ success: false, message: '文件不存在或已被删除' });
     }
 
-    // 读取文件
-    let fileBuffer;
-    try {
-      fileBuffer = await fs.readFile(resolvedPath);
-    } catch (error) {
-      console.error('读取文件失败:', error);
-      return res.status(500).json({ success: false, message: '读取文件失败: ' + error.message });
-    }
-    
-    // 解密文件（支持异步外部SDK，明文模式时直接返回原Buffer）
-    let decryptedBuffer;
-    try {
-      decryptedBuffer = decryptFile(fileBuffer);
-      if (decryptedBuffer instanceof Promise) {
-        decryptedBuffer = await decryptedBuffer;
-      }
-      
-      // 确保返回的是Buffer
-      if (!Buffer.isBuffer(decryptedBuffer)) {
-        decryptedBuffer = Buffer.from(decryptedBuffer);
-      }
-    } catch (error) {
-      console.error('文件解密失败:', error);
-      return res.status(500).json({ success: false, message: '文件解密失败: ' + error.message });
-    }
-    
-    await logOperation(req.user.id, 'download_file', 'file', fileId, {
-      fileName: file.original_name
-    }, req);
+    const encMode = getEncryptionMode();
+    const isPlainMode = !encMode || encMode === 'none' || encMode === 'plain';
 
-    await db.run('UPDATE files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?', [fileId]);
+    // 明文模式 / AES-256：流式下载，避免大文件 OOM
+    if (isPlainMode) {
+      const stat = await fs.stat(resolvedPath);
+      res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+      setAttachmentDisposition(res, file.original_name);
+      res.setHeader('Content-Length', stat.size);
 
-    // 设置响应头（使用 filename* 确保浏览器正确保存中文等文件名）
-    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    setAttachmentDisposition(res, file.original_name);
-    res.setHeader('Content-Length', decryptedBuffer.length);
-    
-    res.send(decryptedBuffer);
+      await logOperation(req.user.id, 'download_file', 'file', fileId, { fileName: file.original_name }, req);
+      db.run('UPDATE files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?', [fileId]).catch(() => {});
+
+      await new Promise((resolve, reject) => {
+        const stream = fsSync.createReadStream(resolvedPath);
+        stream.on('error', reject);
+        res.on('close', resolve);
+        res.on('finish', resolve);
+        stream.pipe(res);
+      });
+    } else if (encMode === 'aes256' || encMode === 'aes-256') {
+      // AES-256 流式解密：先读取 16 字节 IV，再流式 decipher
+      const stat = await fs.stat(resolvedPath);
+      const ivBuf = Buffer.alloc(16);
+      const fd = await fs.open(resolvedPath, 'r');
+      try {
+        await fd.read(ivBuf, 0, 16, 0);
+      } finally {
+        await fd.close();
+      }
+      const crypto = require('crypto');
+      const key = crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY || 'default-key-change-in-production-16chars').digest();
+      const decipher = crypto.createDecipheriv('aes-256-cbc', key, ivBuf);
+
+      res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+      setAttachmentDisposition(res, file.original_name);
+      // CBC 解密后长度不确定（padding），不设 Content-Length
+
+      await logOperation(req.user.id, 'download_file', 'file', fileId, { fileName: file.original_name }, req);
+      db.run('UPDATE files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?', [fileId]).catch(() => {});
+
+      await new Promise((resolve, reject) => {
+        const stream = fsSync.createReadStream(resolvedPath, { start: 16 });
+        stream.on('error', reject);
+        res.on('close', resolve);
+        res.on('finish', resolve);
+        stream.pipe(decipher).pipe(res);
+      });
+    } else {
+      // SM4 / 外部 SDK：仍使用 buffer 模式（不支持流式）
+      let fileBuffer;
+      try {
+        fileBuffer = await fs.readFile(resolvedPath);
+      } catch (error) {
+        console.error('读取文件失败:', error);
+        return res.status(500).json({ success: false, message: '读取文件失败: ' + error.message });
+      }
+
+      let decryptedBuffer;
+      try {
+        decryptedBuffer = decryptFile(fileBuffer);
+        if (decryptedBuffer instanceof Promise) {
+          decryptedBuffer = await decryptedBuffer;
+        }
+        if (!Buffer.isBuffer(decryptedBuffer)) {
+          decryptedBuffer = Buffer.from(decryptedBuffer);
+        }
+      } catch (error) {
+        console.error('文件解密失败:', error);
+        return res.status(500).json({ success: false, message: '文件解密失败: ' + error.message });
+      }
+
+      await logOperation(req.user.id, 'download_file', 'file', fileId, { fileName: file.original_name }, req);
+      await db.run('UPDATE files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?', [fileId]);
+
+      res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+      setAttachmentDisposition(res, file.original_name);
+      res.setHeader('Content-Length', decryptedBuffer.length);
+      res.send(decryptedBuffer);
+    }
   } catch (error) {
     console.error('文件下载失败:', error);
     res.status(500).json({ success: false, message: '文件下载失败' });
@@ -793,17 +807,6 @@ router.delete('/:fileId', authenticate, async (req, res) => {
       [fileId]
     );
     
-    console.log('删除文件操作结果:', {
-      fileId,
-      fileName: file.original_name,
-      changes: result.changes,
-      userId: req.user.id
-    });
-    
-    // 验证删除是否成功
-    const deletedFile = await db.get('SELECT id, deleted_at FROM files WHERE id = ?', [fileId]);
-    console.log('删除后的文件状态:', deletedFile);
-    
     await logOperation(req.user.id, 'delete_file', 'file', fileId, {
       fileName: file.original_name
     }, req);
@@ -842,23 +845,10 @@ router.get('/trash/list', authenticate, async (req, res) => {
     sql += ` ORDER BY f.deleted_at DESC LIMIT ? OFFSET ?`;
     params.push(parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize));
     
-    console.log('回收站查询SQL:', sql);
-    console.log('回收站查询参数:', params);
-    console.log('当前用户:', { id: req.user.id, role: req.user.role, username: req.user.username });
-    
     let files = await db.query(sql, params);
     const permMap = await getBatchFilePermissions(req.user.id, files);
     files = files.map(f => ({ ...f, user_permissions: permMap[f.id] || {} }));
-    
-    console.log('回收站查询结果数量:', files?.length || 0);
-    if (files && files.length > 0) {
-      console.log('回收站文件示例:', files[0]);
-    } else {
-      // 检查是否有任何已删除的文件
-      const allDeleted = await db.query('SELECT id, original_name, deleted_at, created_by FROM files WHERE deleted_at IS NOT NULL LIMIT 5');
-      console.log('数据库中所有已删除的文件:', allDeleted);
-    }
-    
+
     // 获取总数
     let countSql = `SELECT COUNT(*) as total FROM files f WHERE f.deleted_at IS NOT NULL`;
     const countParams = [];
@@ -869,9 +859,7 @@ router.get('/trash/list', authenticate, async (req, res) => {
     }
     
     const totalResult = await db.get(countSql, countParams);
-    
-    console.log('回收站总数:', totalResult?.total || 0);
-    
+
     res.json({
       success: true,
       data: {
@@ -1225,10 +1213,7 @@ router.get('/recent-files', authenticate, async (req, res) => {
       WHERE f.deleted_at IS NULL
       AND (f.created_at >= ? OR f.updated_at >= ?)`;
     const params = [oneWeekAgoStr, oneWeekAgoStr];
-    
-    console.log('获取最近新文件 - 一周前时间:', oneWeekAgoStr);
-    console.log('获取最近新文件 - 用户ID:', req.user.id);
-    
+
     // 非管理员只能看到自己上传的文件或有权限的文件
     if (req.user.role !== 'admin') {
       sql += ` AND (
@@ -1259,17 +1244,9 @@ router.get('/recent-files', authenticate, async (req, res) => {
     }
     
     sql += ` ORDER BY f.updated_at DESC, f.created_at DESC LIMIT 50`;
-    
-    console.log('获取最近新文件 - SQL:', sql);
-    console.log('获取最近新文件 - 参数:', params);
-    
+
     const files = await db.query(sql, params);
-    
-    console.log('获取最近新文件 - 查询结果数量:', files.length);
-    if (files.length > 0) {
-      console.log('获取最近新文件 - 第一个文件:', JSON.stringify(files[0], null, 2));
-    }
-    
+
     res.json({
       success: true,
       data: {
@@ -1351,10 +1328,8 @@ router.get('/:fileId', authenticate, async (req, res) => {
   try {
     const { fileId } = req.params;
     
-    console.log('获取文件详情 - fileId:', fileId, '类型:', typeof fileId, '用户ID:', req.user.id);
-    
     const file = await db.get(
-      `SELECT f.*, 
+      `SELECT f.*,
        u1.username as creator_name, u1.real_name as creator_real_name,
        u2.username as updater_name, u2.real_name as updater_real_name
        FROM files f
@@ -1363,36 +1338,27 @@ router.get('/:fileId', authenticate, async (req, res) => {
        WHERE f.id = ? AND f.deleted_at IS NULL`,
       [fileId]
     );
-    
-    console.log('获取文件详情 - 查询结果:', file ? '找到文件' : '文件不存在');
-    
+
     if (!file) {
       return res.status(404).json({ success: false, message: '文件不存在' });
     }
-    
+
     // 检查权限
     let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
-    console.log('获取文件详情 - 文件级权限检查结果:', hasPermission);
-    
+
     // 如果文件级权限检查失败，检查空间权限
     if (!hasPermission && file.space_id) {
-      console.log('获取文件详情 - 检查空间权限, space_id:', file.space_id);
       hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
-      console.log('获取文件详情 - 空间权限检查结果:', hasPermission);
-      
-      // 如果用户是空间所有者，也应该有权限
+
       if (!hasPermission) {
         const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
         if (space && space.owner_id === req.user.id) {
           hasPermission = true;
-          console.log('获取文件详情 - 用户是空间所有者，授予权限');
         }
       }
     }
-    
-    console.log('获取文件详情 - 最终权限检查结果:', hasPermission);
+
     if (!hasPermission) {
-      console.log('获取文件详情 - 无权限访问');
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     
@@ -1836,27 +1802,19 @@ router.get('/preview/:fileId', authenticate, async (req, res) => {
     
     // 检查权限
     let hasPermission = await checkPermission(req.user.id, 'file', fileId, 'read');
-    console.log('预览文件 - 文件级权限检查结果:', hasPermission);
-    
-    // 如果文件级权限检查失败，检查空间权限
+
     if (!hasPermission && file.space_id) {
-      console.log('预览文件 - 检查空间权限, space_id:', file.space_id);
       hasPermission = await checkPermission(req.user.id, 'space', file.space_id, 'read');
-      console.log('预览文件 - 空间权限检查结果:', hasPermission);
-      
-      // 如果用户是空间所有者，也应该有权限
+
       if (!hasPermission) {
         const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
         if (space && space.owner_id === req.user.id) {
           hasPermission = true;
-          console.log('预览文件 - 用户是空间所有者，授予权限');
         }
       }
     }
-    
-    console.log('预览文件 - 最终权限检查结果:', hasPermission);
+
     if (!hasPermission) {
-      console.log('预览文件 - 无权限访问');
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     

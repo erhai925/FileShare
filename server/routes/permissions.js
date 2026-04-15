@@ -42,9 +42,9 @@ router.post('/', authenticate, async (req, res) => {
     // 添加新权限
     for (const permType of permissionTypes) {
       await db.run(
-        `INSERT INTO permissions (resource_type, resource_id, user_id, group_id, granted_by)
-         VALUES (?, ?, ?, ?, ?)`,
-        [resourceType, resourceId, userId || null, groupId || null, req.user.id]
+        `INSERT INTO permissions (resource_type, resource_id, user_id, group_id, permission_type, granted_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [resourceType, resourceId, userId || null, groupId || null, permType, req.user.id]
       );
     }
     

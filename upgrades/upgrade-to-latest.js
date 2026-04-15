@@ -15,8 +15,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const readline = require('readline');
 
-const LATEST_VERSION = '1.0.12';
-const LATEST_DESCRIPTION = 'office-preview 失败不崩溃；文件夹上传后文件数刷新；下载前主胶片与客户实际情况提示；管理后台备份/恢复超时30分钟、备份压缩level6；普通上传切大文件上传时自动使用已选文件';
+const LATEST_VERSION = '1.0.13';
+const LATEST_DESCRIPTION = '权限写入修复、文件统计修复、外部分享鉴权、回收站清理补全、流式下载、注册限流、事务保护、调试日志清理';
 
 const getVersionFilePath = (projectRoot) => path.join(projectRoot || path.resolve(__dirname, '..'), 'upgrades', 'version.json');
 const defaultProjectRoot = path.resolve(__dirname, '..');
@@ -125,11 +125,17 @@ async function main() {
   }
 
   log('\n本次更新内容（v' + LATEST_VERSION + '）：', 'yellow');
-  log('1. PPT 预览失败不导致 Node 进程崩溃');
-  log('2. 上传后文件夹「x 个文件」数量及时更新');
-  log('3. 下载前提示（主胶片/客户实际情况）');
-  log('4. 管理后台备份/恢复超时 30 分钟，备份压缩 level 6');
-  log('5. 普通上传切大文件上传时自动使用已选文件');
+  log('[P0] 1. 修复权限设置接口 permission_type 缺失');
+  log('[P0] 2. 修复管理后台文件统计 deleted 计数永远为 0');
+  log('[P1] 3. 外部分享验证后颁发临时 JWT 令牌');
+  log('[P1] 4. 回收站清理补全关联数据删除');
+  log('[P1] 5. 过期版本清理排除最新版本');
+  log('[P1] 6. 文件下载流式传输，避免大文件 OOM');
+  log('[P2] 7. 注册接口独立限流 + 密码校验');
+  log('[P2] 8. 权限撤销与用户删除使用事务');
+  log('[P2] 9. 清理约 50 行调试日志');
+  log('[P3] 10. 下载 token 定期批量清理');
+  log('[P3] 11. 移除冗余 getStoragePathAsync');
   log('\n请在该更新路径下执行 git pull 拉取最新代码，在 client 目录执行 npm install，再执行 npm run client:build 构建前端，最后重启服务。', 'yellow');
   log('');
 }

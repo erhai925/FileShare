@@ -1,5 +1,5 @@
 {
-    "currentVersion": "1.0.12",
+    "currentVersion": "1.0.13",
   "upgradeHistory": [
     {"version": "1.0.0", "date": "2024-01-01", "description": "初始版本"},
     {"version": "1.0.1", "date": "2024-12-XX", "description": "从 1.0.0 升级到 1.0.1 - 完善Word文件预览功能，添加localhost环境检测和警告弹框提示"},
@@ -11,6 +11,7 @@
     {"version": "1.0.9", "date": "2025-02-07", "description": "从 1.0.8 升级到 1.0.9 - 时区统一东八区北京时间、普通上传「上传到」文案优化"},
     {"version": "1.0.10", "date": "2025-02-07", "description": "空间大文件上传、下载等待反馈、永久删除超时与外键修复、登录校验与防缓存"},
     {"version": "1.0.11", "date": "2025-02-07", "description": "工作台移除桌面客户端下载；最近文件/空间文件分页与每页10/50/100；内容区局部滚动与随窗口变化；下载链接 token 与复制兼容；文件路径解析与历史 fallback；下载文件名 RFC5987；FilePreview docx/文本预览与内网判断；Files/SpaceDetail 上传 customRequest；server files 与 encryption 融合参考实现"},
-    {"version": "1.0.12", "date": "2025-02-07", "description": "从 1.0.11 升级到 1.0.12 - office-preview 失败不崩溃、文件夹文件数刷新、下载前主胶片提示、备份超时30分钟与压缩level6、大文件切换免重选文件"}
+    {"version": "1.0.12", "date": "2025-02-07", "description": "从 1.0.11 升级到 1.0.12 - office-preview 失败不崩溃、文件夹文件数刷新、下载前主胶片提示、备份超时30分钟与压缩level6、大文件切换免重选文件"},
+    {"version": "1.0.13", "date": "2026-04-15", "description": "从 1.0.12 升级到 1.0.13 - 权限写入修复、文件统计修复、外部分享鉴权、回收站清理补全、流式下载、注册限流、事务保护、调试日志清理"}
   ]
 }

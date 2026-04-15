@@ -301,6 +301,19 @@ function run(sql, params = []) {
   });
 }
 
+// 执行事务：接收一个异步回调，在 BEGIN/COMMIT 中执行，失败自动 ROLLBACK
+async function transaction(fn) {
+  await run('BEGIN TRANSACTION');
+  try {
+    const result = await fn();
+    await run('COMMIT');
+    return result;
+  } catch (error) {
+    await run('ROLLBACK');
+    throw error;
+  }
+}
+
 // 关闭数据库
 function close() {
   return new Promise((resolve, reject) => {
@@ -320,6 +333,7 @@ module.exports = {
   query,
   get,
   run,
+  transaction,
   close
 };
 

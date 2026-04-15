@@ -216,16 +216,19 @@ router.post('/:userId/revoke-all-permissions', authenticate, requireAdmin, async
   try {
     const { userId } = req.params;
     
-    const result = await db.run(
-      'DELETE FROM permissions WHERE user_id = ?',
-      [userId]
-    );
-    
-    // 同时从所有用户组中移除
-    await db.run(
-      'DELETE FROM user_group_members WHERE user_id = ?',
-      [userId]
-    );
+    let result;
+    await db.transaction(async () => {
+      result = await db.run(
+        'DELETE FROM permissions WHERE user_id = ?',
+        [userId]
+      );
+
+      // 同时从所有用户组中移除
+      await db.run(
+        'DELETE FROM user_group_members WHERE user_id = ?',
+        [userId]
+      );
+    });
     
     await logOperation(req.user.id, 'revoke_all_permissions', 'user', userId, {
       permissionsRevoked: result.changes
@@ -297,22 +300,18 @@ router.delete('/:userId', authenticate, requireAdmin, async (req, res) => {
     if (user.id === req.user.id) {
       return res.status(400).json({ success: false, message: '不能删除自己' });
     }
-    
-    // 开始事务：删除用户相关的所有数据
-    // 1. 删除用户权限
-    await db.run('DELETE FROM permissions WHERE user_id = ?', [userIdNum]);
-    
-    // 2. 从用户组中移除
-    await db.run('DELETE FROM user_group_members WHERE user_id = ?', [userIdNum]);
-    
-    // 3. 删除用户创建的分享链接（可选，也可以保留）
-    // await db.run('DELETE FROM shares WHERE created_by = ?', [userIdNum]);
-    
-    // 4. 删除用户评论（可选，也可以保留）
-    // await db.run('DELETE FROM comments WHERE user_id = ?', [userIdNum]);
-    
-    // 5. 最后删除用户本身
-    await db.run('DELETE FROM users WHERE id = ?', [userIdNum]);
+
+    // 在事务中删除用户相关的所有数据，确保原子性
+    await db.transaction(async () => {
+      // 1. 删除用户权限
+      await db.run('DELETE FROM permissions WHERE user_id = ?', [userIdNum]);
+
+      // 2. 从用户组中移除
+      await db.run('DELETE FROM user_group_members WHERE user_id = ?', [userIdNum]);
+
+      // 3. 最后删除用户本身
+      await db.run('DELETE FROM users WHERE id = ?', [userIdNum]);
+    });
     
     await logOperation(req.user.id, 'delete_user', 'user', userIdNum, {
       username: user.username,

@@ -17,14 +17,13 @@ router.get('/stats', authenticate, requireAdmin, async (req, res) => {
        FROM users`
     );
     
-    // 文件统计（排除已删除的文件）
+    // 文件统计（全量查询，分别统计活跃文件和已删除文件）
     const fileStats = await db.get(
-      `SELECT 
-        COUNT(*) as total,
-        SUM(file_size) as total_size,
+      `SELECT
+        SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) as total,
+        SUM(CASE WHEN deleted_at IS NULL THEN file_size ELSE 0 END) as total_size,
         SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) as deleted
-       FROM files
-       WHERE deleted_at IS NULL`
+       FROM files`
     );
     
     // 空间统计
@@ -139,20 +138,82 @@ router.post('/cleanup-trash', authenticate, requireAdmin, async (req, res) => {
     const retentionDays = parseInt(process.env.TRASH_RETENTION_DAYS) || 30;
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
-    
-    const result = await db.run(
-      `DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
+
+    // 先查出待清理文件的磁盘路径，再删除数据库记录和磁盘文件
+    const expiredFiles = await db.query(
+      `SELECT id, file_path FROM files WHERE deleted_at IS NOT NULL AND deleted_at < ?`,
       [cutoffDate.toISOString()]
     );
-    
-    await logOperation(req.user.id, 'cleanup_trash', 'system', null, {
-      filesDeleted: result.changes
-    }, req);
-    
-    res.json({
-      success: true,
-      message: `已清理 ${result.changes} 个过期文件`
+
+    if (expiredFiles.length === 0) {
+      return res.json({ success: true, message: '没有需要清理的过期文件' });
+    }
+
+    const fs = require('fs').promises;
+    const expiredIds = expiredFiles.map(f => f.id);
+    const placeholders = expiredIds.map(() => '?').join(',');
+
+    // 同时删除关联的版本文件
+    const versionFiles = await db.query(
+      `SELECT file_path FROM file_versions WHERE file_id IN (${placeholders})`,
+      expiredIds
+    );
+
+    // 在事务中删除数据库记录（包括所有关联数据）
+    await db.transaction(async () => {
+      await db.run(
+        `DELETE FROM file_versions WHERE file_id IN (${placeholders})`,
+        expiredIds
+      );
+      await db.run(
+        `DELETE FROM permissions WHERE resource_type = 'file' AND resource_id IN (${placeholders})`,
+        expiredIds
+      );
+      await db.run(
+        `DELETE FROM comments WHERE file_id IN (${placeholders})`,
+        expiredIds
+      );
+      await db.run(
+        `DELETE FROM external_shares WHERE resource_type = 'file' AND resource_id IN (${placeholders})`,
+        expiredIds
+      );
+      await db.run(
+        `UPDATE chunk_uploads SET file_id = NULL WHERE file_id IN (${placeholders})`,
+        expiredIds
+      );
+      await db.run(
+        `DELETE FROM files WHERE id IN (${placeholders})`,
+        expiredIds
+      );
     });
+
+    // 数据库删除成功后，清理磁盘文件（失败仅打印警告，不影响接口响应）
+    let diskErrors = 0;
+    const allPaths = [
+      ...expiredFiles.map(f => f.file_path),
+      ...versionFiles.map(f => f.file_path)
+    ];
+    for (const filePath of allPaths) {
+      if (!filePath) continue;
+      try {
+        await fs.unlink(filePath);
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          diskErrors++;
+          console.warn(`清理磁盘文件失败: ${filePath}`, err.message);
+        }
+      }
+    }
+
+    await logOperation(req.user.id, 'cleanup_trash', 'system', null, {
+      filesDeleted: expiredFiles.length,
+      diskErrors
+    }, req);
+
+    const msg = diskErrors > 0
+      ? `已清理 ${expiredFiles.length} 个过期文件（${diskErrors} 个磁盘文件删除失败，请检查日志）`
+      : `已清理 ${expiredFiles.length} 个过期文件`;
+    res.json({ success: true, message: msg });
   } catch (error) {
     console.error('清理回收站失败:', error);
     res.status(500).json({ success: false, message: '清理回收站失败' });
@@ -166,9 +227,16 @@ router.post('/cleanup-versions', authenticate, requireAdmin, async (req, res) =>
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
     
-    // 获取要删除的版本
+    // 获取要删除的版本（排除每个文件的最新版本，避免误删当前版本）
     const versions = await db.query(
-      `SELECT * FROM file_versions WHERE created_at < ?`,
+      `SELECT fv.* FROM file_versions fv
+       WHERE fv.created_at < ?
+       AND fv.id NOT IN (
+         SELECT fv2.id FROM file_versions fv2
+         INNER JOIN (
+           SELECT file_id, MAX(version) as max_ver FROM file_versions GROUP BY file_id
+         ) latest ON fv2.file_id = latest.file_id AND fv2.version = latest.max_ver
+       )`,
       [cutoffDate.toISOString()]
     );
     

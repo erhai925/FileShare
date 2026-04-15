@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 const { authenticate, checkPermission } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
@@ -129,12 +130,20 @@ router.post('/:shareToken/access', async (req, res) => {
       [share.id]
     );
     
+    // 颁发临时访问令牌（有效期 2 小时），后续下载/预览接口凭此令牌鉴权
+    const accessToken = jwt.sign(
+      { shareId: share.id, resourceType: share.resource_type, resourceId: share.resource_id },
+      process.env.JWT_SECRET || 'default-secret',
+      { expiresIn: '2h' }
+    );
+
     res.json({
       success: true,
       message: '验证成功',
       data: {
         resourceType: share.resource_type,
-        resourceId: share.resource_id
+        resourceId: share.resource_id,
+        accessToken
       }
     });
   } catch (error) {

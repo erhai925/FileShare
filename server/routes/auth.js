@@ -1,19 +1,33 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const db = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { logOperation } = require('../utils/logger');
 
 const router = express.Router();
 
+// 注册接口限流（比全局更严格）
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1小时
+  max: 10, // 每个 IP 每小时最多 10 次注册
+  message: { success: false, message: '注册请求过于频繁，请稍后再试' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // 用户注册
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     const { username, email, password, realName } = req.body;
-    
+
     if (!username || !email || !password) {
       return res.status(400).json({ success: false, message: '用户名、邮箱和密码不能为空' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: '密码长度至少6位' });
     }
     
     // 检查用户名和邮箱是否已存在
