@@ -14,6 +14,18 @@ npm install
 cd ..
 ```
 
+> **离线 / 受限网络部署**：v1.0.14 起 Wiki 模块的 PDF 导出依赖 `puppeteer`，默认会拉取 ~250MB 的 Chromium。如无外网，先设置：
+> ```bash
+> # 安装时跳过 Chromium 下载
+> PUPPETEER_SKIP_DOWNLOAD=1 npm install
+>
+> # 运行时指向系统 Chrome（必填，否则 PDF 导出失败）
+> # 在 .env 中加：
+> PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+> ```
+> macOS 路径：`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+> Windows 路径：`C:\Program Files\Google\Chrome\Application\chrome.exe`
+
 ### 2. 配置环境
 
 ```bash
@@ -111,6 +123,7 @@ pm2 save
 - 批量文件上传
 - 在线预览（PDF、图片预览，Office文档提示下载）
 - 桌面客户端（Electron，支持系统托盘、本地文件选择）
+- **Wiki 知识库（v1.0.14+）**：Markdown 编辑（实时预览）、树形目录、版本历史/diff/回滚、乐观锁冲突检测、全文搜索、评论 @ 提及、问题-解决模板、标签/收藏/浏览统计、附件、订阅 + 前端红点通知、批量操作、Markdown 导入导出、PDF 导出（单页同步 / 整库异步）、页面级权限覆盖
 
 🚧 **待实现功能**
 - 移动端APP（React Native）

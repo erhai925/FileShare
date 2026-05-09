@@ -20,6 +20,7 @@ const commentRoutes = require('./routes/comments');
 const searchRoutes = require('./routes/search');
 const adminRoutes = require('./routes/admin');
 const logRoutes = require('./routes/logs');
+const wikiRoutes = require('./routes/wiki');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -83,6 +84,7 @@ app.use('/api/comments', commentRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/logs', logRoutes);
+app.use('/api/wiki', wikiRoutes);
 
 // 健康检查
 app.get('/api/health', (req, res) => {
@@ -188,6 +190,9 @@ async function startServer() {
     // 大文件上传超时（无 Nginx 时 Node 默认约 5 分钟，75MB 慢速网络可能超时）
     const uploadTimeout = parseInt(process.env.UPLOAD_TIMEOUT_MS) || 600000; // 默认 10 分钟
     server.requestTimeout = uploadTimeout;
+
+    // 启动 Wiki 回收站清理任务（F18，30 天保留）
+    require('./jobs/wiki-trash-cleanup').startWikiTrashCleanup();
   } catch (error) {
     console.error('服务器启动失败:', error);
     process.exit(1);

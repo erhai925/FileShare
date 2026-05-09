@@ -20,6 +20,8 @@ async function init() {
           createTables()
             .then(() => ensureChunkUploadsFileId())
             .then(() => ensureFilesDownloadCount())
+            .then(() => ensureSpaceKind())
+            .then(() => ensurePermissionsResourceType())
             .then(resolve)
             .catch(reject);
         }
@@ -187,6 +189,153 @@ async function createTables() {
         FOREIGN KEY (parent_id) REFERENCES comments(id)
       )`);
 
+      // ==================== Wiki 知识库模块（v1.0.14） ====================
+      // Wiki 页面（与 spaces.space_kind='wiki' 关联）
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_pages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        space_id INTEGER NOT NULL,
+        parent_id INTEGER,
+        title TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        content TEXT,
+        content_text TEXT,
+        draft_content TEXT,
+        status TEXT DEFAULT 'draft' CHECK(status IN ('draft','published')),
+        template TEXT DEFAULT 'blank',
+        sort_order INTEGER DEFAULT 0,
+        view_count INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        archived_at DATETIME,
+        created_by INTEGER NOT NULL,
+        updated_by INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        deleted_at DATETIME,
+        FOREIGN KEY (space_id) REFERENCES spaces(id),
+        FOREIGN KEY (parent_id) REFERENCES wiki_pages(id),
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        FOREIGN KEY (updated_by) REFERENCES users(id),
+        UNIQUE(space_id, slug)
+      )`);
+
+      // Wiki 页面版本历史
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_page_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_id INTEGER NOT NULL,
+        version INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT,
+        change_note TEXT,
+        created_by INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (page_id) REFERENCES wiki_pages(id),
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        UNIQUE(page_id, version)
+      )`);
+
+      // Wiki 标签
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        color TEXT DEFAULT '#0d9488',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
+
+      // Wiki 页面-标签关联
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_page_tags (
+        page_id INTEGER NOT NULL,
+        tag_id INTEGER NOT NULL,
+        PRIMARY KEY(page_id, tag_id),
+        FOREIGN KEY (page_id) REFERENCES wiki_pages(id),
+        FOREIGN KEY (tag_id) REFERENCES wiki_tags(id)
+      )`);
+
+      // Wiki 收藏
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_favorites (
+        user_id INTEGER NOT NULL,
+        page_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(user_id, page_id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (page_id) REFERENCES wiki_pages(id)
+      )`);
+
+      // Wiki 浏览记录（明细，用于热门与个人最近浏览）
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_page_views (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_id INTEGER NOT NULL,
+        user_id INTEGER,
+        viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        ip TEXT,
+        FOREIGN KEY (page_id) REFERENCES wiki_pages(id)
+      )`);
+
+      // Wiki 页面内链
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_page_links (
+        source_page_id INTEGER NOT NULL,
+        target_page_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(source_page_id, target_page_id),
+        FOREIGN KEY (source_page_id) REFERENCES wiki_pages(id),
+        FOREIGN KEY (target_page_id) REFERENCES wiki_pages(id)
+      )`);
+
+      // Wiki 页面附件（关联 files 表，运行时复合权限校验）
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_page_attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_id INTEGER NOT NULL,
+        file_id INTEGER NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        created_by INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (page_id) REFERENCES wiki_pages(id),
+        FOREIGN KEY (file_id) REFERENCES files(id),
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        UNIQUE(page_id, file_id)
+      )`);
+
+      // Wiki 订阅（页面/知识库/标签）
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        target_type TEXT NOT NULL CHECK(target_type IN ('page','space','tag')),
+        target_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        UNIQUE(user_id, target_type, target_id)
+      )`);
+
+      // Wiki 通知（前端红点）— @提及 / 订阅更新触发，不外发邮件/站内信
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('mention','subscription_update')),
+        target_type TEXT NOT NULL CHECK(target_type IN ('page','space','tag')),
+        target_id INTEGER NOT NULL,
+        actor_id INTEGER,
+        payload TEXT,
+        read_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (actor_id) REFERENCES users(id)
+      )`);
+
+      // Wiki 评论（独立于 comments 表，避免破坏既有 file_id NOT NULL 约束）
+      db.run(`CREATE TABLE IF NOT EXISTS wiki_comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        mentioned_users TEXT,
+        parent_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (page_id) REFERENCES wiki_pages(id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (parent_id) REFERENCES wiki_comments(id)
+      )`);
+      // ==================== Wiki 模块结束 ====================
+
       // 操作日志表
       db.run(`CREATE TABLE IF NOT EXISTS operation_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,6 +388,17 @@ async function createTables() {
       db.run(`CREATE INDEX IF NOT EXISTS idx_permissions_resource ON permissions(resource_type, resource_id)`);
       db.run(`CREATE INDEX IF NOT EXISTS idx_logs_user ON operation_logs(user_id)`);
       db.run(`CREATE INDEX IF NOT EXISTS idx_logs_created ON operation_logs(created_at)`);
+      // Wiki 模块索引
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_pages_space ON wiki_pages(space_id, deleted_at)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_pages_parent ON wiki_pages(parent_id)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_pages_updated ON wiki_pages(updated_at DESC)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_versions_page ON wiki_page_versions(page_id, version DESC)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_views_page_time ON wiki_page_views(page_id, viewed_at DESC)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_views_user_time ON wiki_page_views(user_id, viewed_at DESC)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_attach_page ON wiki_page_attachments(page_id)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_subs_target ON wiki_subscriptions(target_type, target_id)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_comments_page ON wiki_comments(page_id)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_wiki_notifications_user_read ON wiki_notifications(user_id, read_at, created_at DESC)`);
 
       db.run(`PRAGMA foreign_keys = ON`, (err) => {
         if (err) reject(err);
@@ -268,6 +428,58 @@ async function ensureFilesDownloadCount() {
   if (!hasCol) {
     await run(`ALTER TABLE files ADD COLUMN download_count INTEGER DEFAULT 0`);
     console.log('已为 files 表添加 download_count 列');
+  }
+}
+
+// Wiki v1.0.14：为 spaces 表补全 space_kind 列（区分文件空间 / Wiki 知识库）
+async function ensureSpaceKind() {
+  const rows = await query(`PRAGMA table_info(spaces)`);
+  const hasCol = rows && rows.some(r => r.name === 'space_kind');
+  if (!hasCol) {
+    await run(`ALTER TABLE spaces ADD COLUMN space_kind TEXT DEFAULT 'file'`);
+    // 老数据回填为 'file'，避免 NULL（DEFAULT 仅作用于后续 INSERT）
+    await run(`UPDATE spaces SET space_kind = 'file' WHERE space_kind IS NULL`);
+    console.log('已为 spaces 表添加 space_kind 列');
+  }
+}
+
+// Wiki v1.0.14：permissions.resource_type CHECK 约束扩展支持 'wiki_page'
+// SQLite 不支持 ALTER CHECK，需重建表迁移数据
+async function ensurePermissionsResourceType() {
+  // 通过尝试插入再删除一条 wiki_page 测试记录来检查 CHECK 约束（最快）
+  // 更稳妥的做法：读 sqlite_master 中的表 SQL 文本判断是否包含 'wiki_page'
+  const meta = await get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='permissions'`);
+  if (!meta || !meta.sql) return;
+  if (meta.sql.includes("'wiki_page'")) return; // 已支持
+
+  console.log('正在迁移 permissions 表以支持 wiki_page 资源类型...');
+  await run('PRAGMA foreign_keys = OFF');
+  try {
+    await run('BEGIN TRANSACTION');
+    await run(`CREATE TABLE permissions_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      resource_type TEXT NOT NULL CHECK(resource_type IN ('folder', 'file', 'space', 'wiki_page')),
+      resource_id INTEGER NOT NULL,
+      user_id INTEGER,
+      group_id INTEGER,
+      permission_type TEXT NOT NULL CHECK(permission_type IN ('read', 'write', 'delete', 'comment', 'download')),
+      granted_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (granted_by) REFERENCES users(id)
+    )`);
+    await run(`INSERT INTO permissions_new (id, resource_type, resource_id, user_id, group_id, permission_type, granted_by, created_at)
+               SELECT id, resource_type, resource_id, user_id, group_id, permission_type, granted_by, created_at FROM permissions`);
+    await run(`DROP TABLE permissions`);
+    await run(`ALTER TABLE permissions_new RENAME TO permissions`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_permissions_resource ON permissions(resource_type, resource_id)`);
+    await run('COMMIT');
+    console.log('permissions 表迁移完成（已支持 wiki_page）');
+  } catch (e) {
+    await run('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    await run('PRAGMA foreign_keys = ON');
   }
 }
 

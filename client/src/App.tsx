@@ -13,6 +13,14 @@ import FileDetail from './pages/FileDetail'
 import Trash from './pages/Trash'
 import Admin from './pages/Admin'
 import Profile from './pages/Profile'
+import WikiHome from './pages/wiki/WikiHome'
+import WikiSpace from './pages/wiki/WikiSpace'
+import WikiPage from './pages/wiki/WikiPage'
+import WikiPageEdit from './pages/wiki/WikiPageEdit'
+import WikiSearch from './pages/wiki/WikiSearch'
+import WikiTrash from './pages/wiki/WikiTrash'
+import WikiTags from './pages/wiki/WikiTags'
+import WikiSubscriptions from './pages/wiki/WikiSubscriptions'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { token, isAuthenticated, logout } = useAuthStore()
@@ -73,6 +81,15 @@ function App() {
         <Route path="trash" element={<Trash />} />
         <Route path="spaces" element={<Spaces />} />
         <Route path="spaces/:spaceId" element={<SpaceDetail />} />
+        <Route path="wiki" element={<WikiHome />} />
+        <Route path="wiki/search" element={<WikiSearch />} />
+        <Route path="wiki/trash" element={<WikiTrash />} />
+        <Route path="wiki/tags" element={<WikiTags />} />
+        <Route path="wiki/subscriptions" element={<WikiSubscriptions />} />
+        <Route path="wiki/spaces/:spaceId" element={<WikiSpace />} />
+        <Route path="wiki/spaces/:spaceId/p/:pageId" element={<WikiPage />} />
+        <Route path="wiki/spaces/:spaceId/p/:pageId/edit" element={<WikiPageEdit />} />
+        <Route path="wiki/spaces/:spaceId/new" element={<WikiPageEdit />} />
         <Route path="admin" element={<Admin />} />
         <Route path="profile" element={<Profile />} />
       </Route>

@@ -7,13 +7,15 @@ import {
   SettingOutlined,
   UserOutlined,
   LogoutOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  BookOutlined
 } from '@ant-design/icons'
 import { useEffect, useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import FileUpdateNotification from './FileUpdateNotification'
+import NotificationBell from './wiki/NotificationBell'
 import './Layout.css'
 
 const { Header, Sider, Content } = AntLayout
@@ -105,6 +107,11 @@ export default function Layout() {
       key: '/files',
       icon: <FolderOutlined />,
       label: '文件管理'
+    },
+    {
+      key: '/wiki',
+      icon: <BookOutlined />,
+      label: 'Wiki 知识库'
     }
   ]
 
@@ -158,7 +165,8 @@ export default function Layout() {
     <AntLayout className="app-layout">
       <Header className="app-header">
         <div className="logo">FileShare</div>
-        <div className="header-right">
+        <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <NotificationBell />
           <Dropdown
             menu={{ items: userMenuItems, onClick: handleUserMenuClick }}
             placement="bottomRight"

@@ -67,7 +67,7 @@ async function checkPermission(userId, resourceType, resourceId, permissionType)
     if (user?.role === 'admin') {
       return true;
     }
-    
+
     // 对于文件，检查是否是创建者（创建者默认拥有所有权限）
     if (resourceType === 'file') {
       const file = await db.get('SELECT created_by FROM files WHERE id = ?', [resourceId]);
@@ -75,7 +75,7 @@ async function checkPermission(userId, resourceType, resourceId, permissionType)
         return true;
       }
     }
-    
+
     // 对于空间，检查是否是所有者
     if (resourceType === 'space') {
       const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [resourceId]);
@@ -83,36 +83,85 @@ async function checkPermission(userId, resourceType, resourceId, permissionType)
         return true;
       }
     }
-    
+
+    // Wiki 页面：创建者拥有所有权限；空间所有者对空间内页面有所有权限；
+    // 然后两级混合 — 先查页面级直接/组权限（覆盖），再继承知识库（空间）级权限
+    if (resourceType === 'wiki_page') {
+      const page = await db.get('SELECT created_by, space_id FROM wiki_pages WHERE id = ?', [resourceId]);
+      if (!page) return false;
+      if (page.created_by === userId) return true;
+      const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [page.space_id]);
+      if (space && space.owner_id === userId) return true;
+
+      // 页面级直接权限
+      const direct = await db.get(
+        `SELECT 1 FROM permissions
+         WHERE resource_type = 'wiki_page' AND resource_id = ?
+         AND user_id = ? AND permission_type = ?`,
+        [resourceId, userId, permissionType]
+      );
+      if (direct) return true;
+
+      // 页面级用户组权限
+      const group = await db.get(
+        `SELECT 1 FROM permissions p
+         INNER JOIN user_group_members ugm ON p.group_id = ugm.group_id
+         WHERE p.resource_type = 'wiki_page' AND p.resource_id = ?
+         AND ugm.user_id = ? AND p.permission_type = ?`,
+        [resourceId, userId, permissionType]
+      );
+      if (group) return true;
+
+      // 继承知识库（空间）级权限：直接 + 用户组
+      const spaceDirect = await db.get(
+        `SELECT 1 FROM permissions
+         WHERE resource_type = 'space' AND resource_id = ?
+         AND user_id = ? AND permission_type = ?`,
+        [page.space_id, userId, permissionType]
+      );
+      if (spaceDirect) return true;
+
+      const spaceGroup = await db.get(
+        `SELECT 1 FROM permissions p
+         INNER JOIN user_group_members ugm ON p.group_id = ugm.group_id
+         WHERE p.resource_type = 'space' AND p.resource_id = ?
+         AND ugm.user_id = ? AND p.permission_type = ?`,
+        [page.space_id, userId, permissionType]
+      );
+      if (spaceGroup) return true;
+
+      return false;
+    }
+
     // 检查直接权限
     const directPermission = await db.get(
-      `SELECT * FROM permissions 
-       WHERE resource_type = ? AND resource_id = ? 
+      `SELECT * FROM permissions
+       WHERE resource_type = ? AND resource_id = ?
        AND user_id = ? AND permission_type = ?`,
       [resourceType, resourceId, userId, permissionType]
     );
-    
+
     if (directPermission) {
       return true;
     }
-    
+
     // 检查用户组权限
     const groupPermission = await db.get(
       `SELECT p.* FROM permissions p
        INNER JOIN user_group_members ugm ON p.group_id = ugm.group_id
-       WHERE p.resource_type = ? AND p.resource_id = ? 
+       WHERE p.resource_type = ? AND p.resource_id = ?
        AND ugm.user_id = ? AND p.permission_type = ?`,
       [resourceType, resourceId, userId, permissionType]
     );
-    
+
     if (groupPermission) {
       return true;
     }
-    
+
     // 如果没有明确的权限记录，对于文件类型，检查是否有通用的读取权限
     // 这里可以根据业务需求调整：默认允许还是默认拒绝
     // 目前采用默认拒绝策略，只有明确授权的才能访问
-    
+
     return false;
   } catch (error) {
     console.error('权限检查失败:', error);
@@ -217,12 +266,103 @@ async function getBatchFilePermissions(userId, files) {
   return permMap;
 }
 
+// 批量获取 Wiki 页面权限（按页面 + 知识库两级聚合，避免 N+1）
+async function getBatchWikiPermissions(userId, pages) {
+  const types = ['read', 'write', 'delete', 'comment', 'download'];
+  const init = () => ({ read: false, write: false, delete: false, comment: false, download: false });
+  const result = {};
+  if (!pages || pages.length === 0) return result;
+
+  const user = await db.get('SELECT role FROM users WHERE id = ?', [userId]);
+  const isAdmin = user?.role === 'admin';
+  for (const p of pages) result[p.id] = init();
+
+  if (isAdmin) {
+    for (const p of pages) result[p.id] = { read: true, write: true, delete: true, comment: true, download: true };
+    return result;
+  }
+
+  // 创建者全权
+  for (const p of pages) {
+    if (p.created_by === userId) {
+      result[p.id] = { read: true, write: true, delete: true, comment: true, download: true };
+    }
+  }
+
+  // 空间所有者：对其拥有的空间下所有页面赋全权
+  const spaceIds = [...new Set(pages.map(p => p.space_id).filter(Boolean))];
+  if (spaceIds.length > 0) {
+    const ownedSpaces = await db.query(
+      `SELECT id FROM spaces WHERE owner_id = ? AND id IN (${spaceIds.map(() => '?').join(',')})`,
+      [userId, ...spaceIds]
+    );
+    const ownedSet = new Set(ownedSpaces.map(s => s.id));
+    for (const p of pages) {
+      if (ownedSet.has(p.space_id)) {
+        result[p.id] = { read: true, write: true, delete: true, comment: true, download: true };
+      }
+    }
+  }
+
+  // 页面级直接 + 用户组权限
+  const pageIds = pages.map(p => p.id);
+  if (pageIds.length > 0) {
+    const ph = pageIds.map(() => '?').join(',');
+    const pageDirect = await db.query(
+      `SELECT resource_id, permission_type FROM permissions
+       WHERE resource_type = 'wiki_page' AND resource_id IN (${ph}) AND user_id = ?`,
+      [...pageIds, userId]
+    );
+    const pageGroup = await db.query(
+      `SELECT p.resource_id, p.permission_type FROM permissions p
+       INNER JOIN user_group_members ugm ON p.group_id = ugm.group_id
+       WHERE p.resource_type = 'wiki_page' AND p.resource_id IN (${ph}) AND ugm.user_id = ?`,
+      [...pageIds, userId]
+    );
+    for (const r of [...pageDirect, ...pageGroup]) {
+      if (result[r.resource_id]) result[r.resource_id][r.permission_type] = true;
+    }
+  }
+
+  // 知识库（空间）级权限继承
+  if (spaceIds.length > 0) {
+    const sh = spaceIds.map(() => '?').join(',');
+    const spaceDirect = await db.query(
+      `SELECT resource_id, permission_type FROM permissions
+       WHERE resource_type = 'space' AND resource_id IN (${sh}) AND user_id = ?`,
+      [...spaceIds, userId]
+    );
+    const spaceGroup = await db.query(
+      `SELECT p.resource_id, p.permission_type FROM permissions p
+       INNER JOIN user_group_members ugm ON p.group_id = ugm.group_id
+       WHERE p.resource_type = 'space' AND p.resource_id IN (${sh}) AND ugm.user_id = ?`,
+      [...spaceIds, userId]
+    );
+    const spacePermMap = {};
+    for (const r of [...spaceDirect, ...spaceGroup]) {
+      if (!spacePermMap[r.resource_id]) spacePermMap[r.resource_id] = new Set();
+      spacePermMap[r.resource_id].add(r.permission_type);
+    }
+    for (const p of pages) {
+      const perms = spacePermMap[p.space_id];
+      if (perms) {
+        for (const t of types) {
+          if (perms.has(t)) result[p.id][t] = true;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 module.exports = {
   authenticate,
   requireRole,
   requireAdmin,
   checkPermission,
   getUserPermissions,
-  getBatchFilePermissions
+  getBatchFilePermissions,
+  getBatchWikiPermissions
 };
 

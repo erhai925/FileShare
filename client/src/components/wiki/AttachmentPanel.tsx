@@ -1,0 +1,121 @@
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { List, Button, Upload, Space, message, Empty, Modal, Typography } from 'antd'
+import {
+  PaperClipOutlined, UploadOutlined, DeleteOutlined, DownloadOutlined
+} from '@ant-design/icons'
+import api from '../../services/api'
+import { wikiApi } from '../../services/wikiService'
+
+const { Text } = Typography
+
+function fmtSize(bytes?: number) {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+export default function AttachmentPanel({
+  pageId, canWrite
+}: { pageId: number; canWrite?: boolean }) {
+  const qc = useQueryClient()
+  const [uploading, setUploading] = useState(false)
+
+  const { data } = useQuery({
+    queryKey: ['wiki', 'attachments', pageId],
+    queryFn: () => wikiApi.listAttachments(pageId)
+  })
+
+  const detach = useMutation({
+    mutationFn: (fileId: number) => wikiApi.detachFile(pageId, fileId),
+    onSuccess: () => {
+      message.success('附件已移除')
+      qc.invalidateQueries({ queryKey: ['wiki', 'attachments', pageId] })
+    },
+    onError: (e: any) => message.error(e?.message || '移除失败')
+  })
+
+  const handleUpload = async (file: File) => {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      // 复用现有文件上传接口
+      const r: any = await api.post('/files/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      const fileId = r?.data?.fileId || r?.data?.id || r?.fileId
+      if (!fileId) throw new Error('上传未返回 fileId')
+      await wikiApi.attachFile(pageId, fileId)
+      message.success('附件已添加')
+      qc.invalidateQueries({ queryKey: ['wiki', 'attachments', pageId] })
+    } catch (e: any) {
+      message.error(e?.message || '上传失败')
+    } finally {
+      setUploading(false)
+    }
+    return false // 阻止 antd 默认上传
+  }
+
+  const items = data?.data || []
+
+  return (
+    <div>
+      <Space style={{ marginBottom: 8, width: '100%', justifyContent: 'space-between' }}>
+        <Text strong><PaperClipOutlined /> 附件 ({items.length})</Text>
+        {canWrite && (
+          <Upload beforeUpload={handleUpload} showUploadList={false}>
+            <Button size="small" icon={<UploadOutlined />} loading={uploading}>
+              添加附件
+            </Button>
+          </Upload>
+        )}
+      </Space>
+      {items.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无附件" />
+      ) : (
+        <List
+          size="small"
+          dataSource={items}
+          renderItem={(a: any) => (
+            <List.Item
+              actions={[
+                <Button
+                  key="dl"
+                  size="small"
+                  type="link"
+                  icon={<DownloadOutlined />}
+                  href={`/api/files/${a.file_id}/download`}
+                  target="_blank"
+                >下载</Button>,
+                canWrite && (
+                  <Button
+                    key="rm"
+                    size="small"
+                    type="link"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => Modal.confirm({
+                      title: '移除附件？',
+                      content: '仅断开附件挂载，文件库中的源文件保留',
+                      onOk: () => detach.mutate(a.file_id)
+                    })}
+                  >移除</Button>
+                )
+              ].filter(Boolean) as any}
+            >
+              <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                <Text>{a.original_name}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {fmtSize(a.file_size)} · {a.uploader_name}
+                </Text>
+              </Space>
+            </List.Item>
+          )}
+        />
+      )}
+    </div>
+  )
+}
