@@ -85,7 +85,10 @@ export default function FileList(props: FileListProps) {
         </div>
       ) : null}
 
-      <div className="scroll-table-wrap" style={{ flex: 1 }}>
+      {/* 不复用 .scroll-table-wrap：那个全局类硬限了 max-height: min(600px, ...)，
+          会让本页 Sider+Content 布局下右表始终只显示固定高度，无法跟随窗口伸缩。
+          这里直接用 flex:1 + overflow:auto，由父级 Content 控制可用高度。 */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         <Table
           rowSelection={{
             selectedRowKeys,

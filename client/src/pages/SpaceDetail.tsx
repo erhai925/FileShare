@@ -573,7 +573,7 @@ export default function SpaceDetail() {
   const batchCount = selectedRowKeys.length
 
   return (
-    <div className="page-content" style={{ height: 'calc(100vh - 96px)', display: 'flex', flexDirection: 'column' }}>
+    <div className="page-content" style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <Breadcrumb style={{ marginBottom: 12 }}>
         <Breadcrumb.Item>
           <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/spaces')}>返回空间列表</Button>
