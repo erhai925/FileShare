@@ -725,6 +725,96 @@ router.delete('/:spaceId/folders/:folderId', authenticate, async (req, res) => {
   }
 });
 
+// 移动文件夹（修改 parent_id），用于左树拖拽与"移动到..."操作
+// body: { parentId: number | null, sortOrder?: number }
+router.put('/:spaceId/folders/:folderId/move', authenticate, async (req, res) => {
+  try {
+    const { spaceId, folderId } = req.params;
+    const rawParent = req.body.parentId;
+    // 兼容前端传 null / '' / 0 等
+    const parentId = (rawParent === null || rawParent === undefined || rawParent === '' || rawParent === 0 || rawParent === '0')
+      ? null
+      : parseInt(rawParent);
+    if (parentId !== null && isNaN(parentId)) {
+      return res.status(400).json({ success: false, message: 'parentId 非法' });
+    }
+    const folderIdNum = parseInt(folderId);
+
+    const folder = await db.get('SELECT * FROM folders WHERE id = ? AND space_id = ?', [folderIdNum, spaceId]);
+    if (!folder) {
+      return res.status(404).json({ success: false, message: '文件夹不存在' });
+    }
+
+    // 移到当前位置无变化，直接返回（避免不必要的级联更新）
+    if ((folder.parent_id || null) === parentId) {
+      return res.json({ success: true, message: '位置未变化' });
+    }
+
+    // 权限
+    const hasPermission = await checkPermission(req.user.id, 'space', spaceId, 'write');
+    if (!hasPermission) {
+      return res.status(403).json({ success: false, message: '无修改文件夹权限' });
+    }
+
+    // 目标 parent 校验
+    let parent = null;
+    if (parentId !== null) {
+      if (parentId === folderIdNum) {
+        return res.status(400).json({ success: false, message: '不能移到自身' });
+      }
+      parent = await db.get('SELECT * FROM folders WHERE id = ? AND space_id = ?', [parentId, spaceId]);
+      if (!parent) {
+        return res.status(400).json({ success: false, message: '目标父文件夹不存在或跨空间' });
+      }
+      // 环路：parent 路径不能位于当前文件夹路径之下
+      // folders.path 是斜杠分隔的物化路径（见同文件的 rename 路由实现）
+      const oldPath = folder.path;
+      if (parent.path === oldPath || parent.path.startsWith(oldPath + '/')) {
+        return res.status(400).json({ success: false, message: '不能将文件夹移动到自身的子目录下' });
+      }
+    }
+
+    // 同级重名校验（SQLite 中 parent_id IS NULL 必须显式写，不能用 `IS ?` 占位）
+    const dup = parentId === null
+      ? await db.get('SELECT id FROM folders WHERE space_id = ? AND parent_id IS NULL AND name = ? AND id != ?',
+          [spaceId, folder.name, folderIdNum])
+      : await db.get('SELECT id FROM folders WHERE space_id = ? AND parent_id = ? AND name = ? AND id != ?',
+          [spaceId, parentId, folder.name, folderIdNum]);
+    if (dup) {
+      return res.status(400).json({ success: false, message: '目标位置已存在同名文件夹' });
+    }
+
+    // 计算新 path：parent 不为空时是 parent.path + '/' + name，否则是 name
+    const oldPath = folder.path;
+    const newPath = parent ? `${parent.path}/${folder.name}` : folder.name;
+
+    // 更新当前文件夹
+    await db.run(
+      'UPDATE folders SET parent_id = ?, path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [parentId, newPath, folderIdNum]
+    );
+
+    // 级联更新所有后代的 path（仅前缀替换，与 rename 路由对齐）
+    const descendants = await db.query('SELECT id, path FROM folders WHERE path LIKE ?', [`${oldPath}/%`]);
+    for (const child of descendants) {
+      const childNew = newPath + child.path.slice(oldPath.length);
+      await db.run('UPDATE folders SET path = ? WHERE id = ?', [childNew, child.id]);
+    }
+
+    await logOperation(req.user.id, 'move_folder', 'folder', folderIdNum, {
+      folderName: folder.name,
+      previousParentId: folder.parent_id,
+      targetParentId: parentId,
+      spaceId
+    }, req);
+
+    res.json({ success: true, message: '文件夹移动成功' });
+  } catch (error) {
+    console.error('移动文件夹失败:', error);
+    res.status(500).json({ success: false, message: '移动文件夹失败' });
+  }
+});
+
 // 获取空间的完整文件树（包含文件夹和文件）
 router.get('/:spaceId/file-tree', authenticate, async (req, res) => {
   try {
