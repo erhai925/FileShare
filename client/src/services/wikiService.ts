@@ -199,5 +199,14 @@ export const wikiApi = {
     api.get<any, ApiResp<any[]>>(`/permissions/wiki_page/${pageId}`),
   setPagePermission: (data: { resourceId: number; userId?: number; groupId?: number; permissionTypes: string[] }) =>
     api.post<any, ApiResp<null>>('/permissions', { ...data, resourceType: 'wiki_page' }),
-  revokePagePermission: (id: number) => api.delete<any, ApiResp<null>>(`/permissions/${id}`)
+  revokePagePermission: (id: number) => api.delete<any, ApiResp<null>>(`/permissions/${id}`),
+
+  // 编辑器粘贴/拖拽图片上传，返回的 url 可直接拼入 ![](url)
+  uploadInlineImage: (file: File) => {
+    const fd = new FormData()
+    fd.append('image', file)
+    return api.post<any, ApiResp<{ url: string }>>('/wiki/upload-image', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
 }

@@ -6,9 +6,9 @@ import {
   Modal, Spin, Tag, Breadcrumb, Card
 } from 'antd'
 import { SaveOutlined, SendOutlined, ArrowLeftOutlined, HomeOutlined, BookOutlined } from '@ant-design/icons'
-import MDEditor from '@uiw/react-md-editor'
 import { wikiApi } from '../../services/wikiService'
 import ConflictDialog, { ConflictData } from '../../components/wiki/ConflictDialog'
+import MarkdownEditor from '../../components/wiki/MarkdownEditor'
 
 const { Header, Content } = Layout
 const { Text } = Typography
@@ -236,12 +236,10 @@ export default function WikiPageEdit() {
           </Space>
         </Card>
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <MDEditor
+          <MarkdownEditor
             value={content}
-            onChange={(v) => { setContent(v || ''); setHasUnsaved(true) }}
+            onChange={(v) => { setContent(v); setHasUnsaved(true) }}
             height="100%"
-            preview="live"
-            visibleDragbar={false}
           />
         </div>
       </Content>

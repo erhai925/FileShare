@@ -1693,6 +1693,83 @@ router.post('/spaces/:id/import', authenticate, importUpload.single('file'), asy
   }
 });
 
+// ==================== 编辑器内联图片粘贴 / 拖拽上传 ====================
+// 与 wiki_page_attachments（页面附件）不同，这里是编辑器中正文插入的小图，
+// 走独立轻量存储：sha256 文件名做内容去重 + 防猜测；公开 GET（同源即可访问）。
+const crypto = require('crypto');
+const INLINE_IMAGE_MIME_EXT = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/svg+xml': '.svg'
+};
+const inlineImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 单图 20MB
+  fileFilter: (req, file, cb) => {
+    if (INLINE_IMAGE_MIME_EXT[file.mimetype]) cb(null, true);
+    else cb(new Error('仅支持 png/jpg/gif/webp/svg'));
+  }
+});
+
+/**
+ * POST /api/wiki/upload-image — 编辑器粘贴/拖拽图片专用上传
+ * form: image (multipart)
+ * resp: { url: '/api/wiki/images/<hash>.<ext>' }
+ */
+router.post('/upload-image', authenticate, inlineImageUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: '未上传图片' });
+    const ext = INLINE_IMAGE_MIME_EXT[req.file.mimetype];
+    const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const filename = hash + ext;
+
+    const { getStoragePath } = require('../utils/storage');
+    const storagePath = await getStoragePath();
+    const dir = pathLib.resolve(storagePath, 'wiki', 'images');
+    await fsPromises.mkdir(dir, { recursive: true });
+    const dest = pathLib.join(dir, filename);
+
+    // 内容寻址：相同内容只存一份
+    try {
+      await fsPromises.access(dest);
+    } catch {
+      await fsPromises.writeFile(dest, req.file.buffer);
+    }
+
+    res.json({ success: true, data: { url: `/api/wiki/images/${filename}` } });
+  } catch (error) {
+    console.error('上传内联图片失败:', error);
+    res.status(500).json({ success: false, message: error.message || '上传图片失败' });
+  }
+});
+
+/**
+ * GET /api/wiki/images/:filename — 公开访问（hash 文件名作防猜测保护）
+ * 适合 <img src> 直链；缓存 1 年（内容寻址永不变更）。
+ */
+router.get('/images/:filename', async (req, res) => {
+  try {
+    const { filename } = req.params;
+    // 严格校验：仅允许 64 位 hex hash + 已知小写扩展名，防路径遍历
+    if (!/^[a-f0-9]{64}\.(png|jpg|gif|webp|svg)$/.test(filename)) {
+      return res.status(400).json({ success: false, message: '非法文件名' });
+    }
+    const { getStoragePath } = require('../utils/storage');
+    const storagePath = await getStoragePath();
+    const filepath = pathLib.resolve(storagePath, 'wiki', 'images', filename);
+    try { await fsPromises.access(filepath); } catch {
+      return res.status(404).json({ success: false, message: '图片不存在' });
+    }
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.sendFile(filepath);
+  } catch (error) {
+    console.error('获取内联图片失败:', error);
+    res.status(500).json({ success: false, message: '获取图片失败' });
+  }
+});
+
 /**
  * GET /spaces/:id/export?format=md|pdf
  * - md: 同步打包返回 zip
