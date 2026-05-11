@@ -29,7 +29,17 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 // 安全中间件
-app.use(helmet());
+// 内网 IP 部署（无 HTTPS）下关闭 CSP 中的 upgrade-insecure-requests 与 HSTS：
+// 否则浏览器会把同源 JS/CSS 自动升级为 https，导致静态资源加载失败 → 白屏。
+// 公网 HTTPS 部署时可通过环境变量 ENABLE_STRICT_SECURITY=1 重新开启默认策略。
+if (process.env.ENABLE_STRICT_SECURITY === '1') {
+  app.use(helmet());
+} else {
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    strictTransportSecurity: false
+  }));
+}
 app.use(compression());
 
 // CORS配置 - 支持 localhost、ip:port 等多种访问方式

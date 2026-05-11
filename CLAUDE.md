@@ -119,6 +119,7 @@ Configured via `.env` file (see `.env.example`). Critical variables:
 - `UPLOAD_TIMEOUT_MS` — server `requestTimeout` for upload endpoints (default `600000`, i.e. 10 min)
 - `RATE_LIMIT_MAX` — requests per 15-min window per IP for non-upload `/api/*` (default `1000`)
 - `VITE_API_URL` — frontend dev: target URL for the Vite `/api` proxy (default `http://localhost:3000`)
+- `ENABLE_STRICT_SECURITY` — set to `1` only on public HTTPS deployments to restore helmet's default CSP/HSTS. Default is **off**: in HTTP / intranet deploys helmet's default `upgrade-insecure-requests` directive causes browsers to upgrade same-origin JS/CSS to https, which has no cert → white screen. Wired up in `server/index.js`.
 
 Wiki module (v1.0.14+):
 - `WIKI_TRASH_RETENTION_DAYS` — soft-deleted wiki pages permanently purged after this many days (default `30`); cleanup job runs every 12h.
