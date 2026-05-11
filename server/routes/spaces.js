@@ -118,10 +118,11 @@ router.get('/:spaceId', authenticate, async (req, res) => {
       [spaceId]
     );
     
-    // 获取空间下的文件
-    let filesSql = `SELECT f.*, 
-      u1.username as creator_name, 
-      u2.username as updater_name
+    // 获取空间下的文件（含所在文件夹名，前端「全部文件」视图展示用）
+    let filesSql = `SELECT f.*,
+      u1.username as creator_name,
+      u2.username as updater_name,
+      (SELECT name FROM folders WHERE id = f.folder_id LIMIT 1) as folder_name
       FROM files f
       LEFT JOIN users u1 ON f.created_by = u1.id
       LEFT JOIN users u2 ON f.updated_by = u2.id
