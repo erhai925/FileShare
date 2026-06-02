@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Layout, Button, Space, Typography, Spin, Breadcrumb, Tag, message, Modal,
-  Card, Avatar, List, Input, Empty, Dropdown, Tooltip
+  Card, Avatar, List, Input, Empty, Dropdown, Tooltip, Image
 } from 'antd'
 import {
   HomeOutlined, EditOutlined, DeleteOutlined, StarOutlined,
@@ -240,6 +240,15 @@ export default function WikiPage() {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                  // 图片：点击放大查看全貌（遮罩层），点击图片外/ESC 关闭恢复
+                  img: ({ src, alt }) => (
+                    <Image
+                      src={typeof src === 'string' ? src : ''}
+                      alt={alt}
+                      style={{ maxWidth: '100%', cursor: 'zoom-in', borderRadius: 4 }}
+                      preview={{ mask: '点击查看大图' }}
+                    />
+                  ),
                   h1: ({ children, ...p }) => {
                     const id = encodeURIComponent(String(children).toLowerCase().replace(/[\s\/\\?#&=+%]+/g, '-'))
                     return <h1 id={id} {...p}>{children}</h1>
