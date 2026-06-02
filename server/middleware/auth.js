@@ -93,10 +93,11 @@ async function checkPermission(userId, resourceType, resourceId, permissionType)
       const space = await db.get('SELECT owner_id, type, space_kind FROM spaces WHERE id = ?', [page.space_id]);
       if (space && space.owner_id === userId) return true;
 
-      // 团队/部门知识库：全员可消费（读 / 评论 / 下载），写、删仍受控
+      // 团队/部门知识库：全员可协作（读 / 写 / 删页面 / 评论 / 下载）。
+      // 删库、改库信息、彻底删除等库级治理操作不走这里，仍限 owner/admin。
       if (space && space.space_kind === 'wiki'
         && (space.type === 'team' || space.type === 'department')
-        && ['read', 'comment', 'download'].includes(permissionType)) {
+        && ['read', 'write', 'delete', 'comment', 'download'].includes(permissionType)) {
         return true;
       }
 
@@ -311,7 +312,7 @@ async function getBatchWikiPermissions(userId, pages) {
     }
   }
 
-  // 团队/部门知识库：全员可消费（读 / 评论 / 下载）
+  // 团队/部门知识库：全员可协作（读 / 写 / 删页面 / 评论 / 下载）
   if (spaceIds.length > 0) {
     const openRows = await db.query(
       `SELECT id FROM spaces WHERE id IN (${spaceIds.map(() => '?').join(',')})
@@ -322,6 +323,8 @@ async function getBatchWikiPermissions(userId, pages) {
     for (const p of pages) {
       if (openSet.has(p.space_id)) {
         result[p.id].read = true;
+        result[p.id].write = true;
+        result[p.id].delete = true;
         result[p.id].comment = true;
         result[p.id].download = true;
       }

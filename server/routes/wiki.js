@@ -44,6 +44,18 @@ async function canReadWikiSpace(user, space) {
   return checkPermission(user.id, 'space', space.id, 'read');
 }
 
+/**
+ * 知识库是否允许当前用户「贡献内容」（创建页面 / 恢复 / 导入等库级写动作）：
+ * team/部门知识库对所有登录用户开放协作；其余需 admin / owner / 显式 write 授权。
+ * 注意：改知识库信息、删库等「治理」动作不走这里，仍限 admin / owner（见对应路由）。
+ */
+async function canContributeWikiSpace(user, space) {
+  if (user.role === 'admin') return true;
+  if (space.owner_id === user.id) return true;
+  if (space.type === 'team' || space.type === 'department') return true;
+  return checkPermission(user.id, 'space', space.id, 'write');
+}
+
 // ==================== F1 知识库 CRUD ====================
 
 /**
@@ -324,9 +336,8 @@ router.post('/pages', authenticate, async (req, res) => {
     const space = await getWikiSpace(spaceId);
     if (!space) return res.status(404).json({ success: false, message: '知识库不存在' });
 
-    if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
-      const ok = await checkPermission(req.user.id, 'space', spaceId, 'write');
-      if (!ok) return res.status(403).json({ success: false, message: '无写入权限' });
+    if (!(await canContributeWikiSpace(req.user, space))) {
+      return res.status(403).json({ success: false, message: '无写入权限' });
     }
 
     if (parentId) {
@@ -749,8 +760,8 @@ router.post('/pages/:id/restore', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: '页面不在回收站中' });
     }
 
-    const ok = await checkPermission(req.user.id, 'space', page.space_id, 'write');
-    if (!ok && req.user.role !== 'admin') {
+    const rspace = await db.get(`SELECT id, owner_id, type FROM spaces WHERE id = ?`, [page.space_id]);
+    if (!rspace || !(await canContributeWikiSpace(req.user, rspace))) {
       return res.status(403).json({ success: false, message: '无恢复权限' });
     }
 
@@ -1501,8 +1512,9 @@ router.get('/pages/:id/contributors', authenticate, async (req, res) => {
 router.get('/spaces/:id/contributors', authenticate, async (req, res) => {
   try {
     const spaceId = parseInt(req.params.id);
-    const ok = await checkPermission(req.user.id, 'space', spaceId, 'read');
-    if (!ok && req.user.role !== 'admin') {
+    const space = await getWikiSpace(spaceId);
+    if (!space) return res.status(404).json({ success: false, message: '知识库不存在' });
+    if (!(await canReadWikiSpace(req.user, space))) {
       return res.status(403).json({ success: false, message: '无访问权限' });
     }
     const rows = await db.query(
@@ -1673,9 +1685,9 @@ router.post('/spaces/:id/import', authenticate, importUpload.single('file'), asy
     const space = await getWikiSpace(spaceId);
     if (!space) return res.status(404).json({ success: false, message: '知识库不存在' });
 
-    const ok = req.user.role === 'admin' || space.owner_id === req.user.id ||
-      await checkPermission(req.user.id, 'space', spaceId, 'write');
-    if (!ok) return res.status(403).json({ success: false, message: '无写入权限' });
+    if (!(await canContributeWikiSpace(req.user, space))) {
+      return res.status(403).json({ success: false, message: '无写入权限' });
+    }
 
     if (!req.file) return res.status(400).json({ success: false, message: '未上传文件' });
     zipPath = req.file.path;
@@ -1790,9 +1802,9 @@ router.get('/spaces/:id/export', authenticate, async (req, res) => {
     const spaceId = parseInt(req.params.id);
     const space = await getWikiSpace(spaceId);
     if (!space) return res.status(404).json({ success: false, message: '知识库不存在' });
-    const ok = req.user.role === 'admin' || space.owner_id === req.user.id ||
-      await checkPermission(req.user.id, 'space', spaceId, 'read');
-    if (!ok) return res.status(403).json({ success: false, message: '无访问权限' });
+    if (!(await canReadWikiSpace(req.user, space))) {
+      return res.status(403).json({ success: false, message: '无访问权限' });
+    }
 
     const format = (req.query.format || 'md').toString();
 

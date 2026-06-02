@@ -3,18 +3,26 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Layout, Button, Space, Typography, Empty, Spin, Breadcrumb, message, Modal,
-  Switch, Upload, Alert
+  Switch, Upload, Alert, Form, Input, Select
 } from 'antd'
 import {
   PlusOutlined, BookOutlined, HomeOutlined, DeleteOutlined, ArrowLeftOutlined,
-  DownloadOutlined, UploadOutlined, CheckSquareOutlined, FilePdfOutlined
+  DownloadOutlined, UploadOutlined, CheckSquareOutlined, FilePdfOutlined, EditOutlined
 } from '@ant-design/icons'
 import { Dropdown, Progress } from 'antd'
 import api from '../../services/api'
 import { wikiApi } from '../../services/wikiService'
+import { useAuthStore } from '../../stores/authStore'
 import PageTree from '../../components/wiki/PageTree'
 import BatchActionBar from '../../components/wiki/BatchActionBar'
 import SubscribeButton from '../../components/wiki/SubscribeButton'
+
+const SPACE_TYPE_OPTIONS = [
+  { value: 'team', label: '团队' },
+  { value: 'department', label: '部门' },
+  { value: 'personal', label: '个人' },
+  { value: 'project', label: '项目' }
+]
 
 const { Sider, Content } = Layout
 const { Title, Text } = Typography
@@ -24,6 +32,7 @@ export default function WikiSpace() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const sid = Number(spaceId)
+  const currentUser = useAuthStore(s => s.user)
   const [includeArchived, setIncludeArchived] = useState(false)
   const [includeDraft, setIncludeDraft] = useState(true)
   const [batchMode, setBatchMode] = useState(false)
@@ -33,6 +42,8 @@ export default function WikiSpace() {
   const [importResult, setImportResult] = useState<any>(null)
   const [pdfTaskId, setPdfTaskId] = useState<string | null>(null)
   const [pdfTaskState, setPdfTaskState] = useState<any>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm] = Form.useForm()
 
   const { data: spaceData } = useQuery({
     queryKey: ['wiki', 'space', sid],
@@ -58,6 +69,17 @@ export default function WikiSpace() {
       navigate('/wiki')
     },
     onError: (e: any) => message.error(e?.message || '删除失败')
+  })
+
+  const editSpace = useMutation({
+    mutationFn: (v: any) => wikiApi.updateSpace(sid, v),
+    onSuccess: () => {
+      message.success('知识库信息已更新')
+      setEditOpen(false)
+      qc.invalidateQueries({ queryKey: ['wiki', 'space', sid] })
+      qc.invalidateQueries({ queryKey: ['wiki', 'spaces'] })
+    },
+    onError: (e: any) => message.error(e?.message || '更新失败')
   })
 
   // 整库 PDF 异步导出
@@ -224,15 +246,29 @@ export default function WikiSpace() {
                 >
                   {batchMode ? '退出多选' : '多选'}
                 </Button>
-                <Button danger icon={<DeleteOutlined />} onClick={() => {
-                  Modal.confirm({
-                    title: '删除知识库',
-                    content: '只有清空所有页面的知识库才能删除。是否继续？',
-                    onOk: () => deleteSpace.mutate()
-                  })
-                }}>
-                  删除
-                </Button>
+                {(currentUser?.role === 'admin' || space.owner_id === currentUser?.id) && (
+                  <Button icon={<EditOutlined />} onClick={() => {
+                    editForm.setFieldsValue({
+                      name: space.name,
+                      description: space.description,
+                      type: space.type
+                    })
+                    setEditOpen(true)
+                  }}>
+                    编辑
+                  </Button>
+                )}
+                {(currentUser?.role === 'admin' || space.owner_id === currentUser?.id) && (
+                  <Button danger icon={<DeleteOutlined />} onClick={() => {
+                    Modal.confirm({
+                      title: '删除知识库',
+                      content: '只有清空所有页面的知识库才能删除。是否继续？',
+                      onOk: () => deleteSpace.mutate()
+                    })
+                  }}>
+                    删除
+                  </Button>
+                )}
               </Space>
             </Space>
             <Empty
@@ -329,6 +365,31 @@ export default function WikiSpace() {
             }
           />
         )}
+      </Modal>
+
+      {/* 编辑知识库信息 Modal */}
+      <Modal
+        title="编辑知识库信息"
+        open={editOpen}
+        onCancel={() => setEditOpen(false)}
+        onOk={() => editForm.submit()}
+        confirmLoading={editSpace.isPending}
+      >
+        <Form
+          form={editForm}
+          layout="vertical"
+          onFinish={(v) => editSpace.mutate(v)}
+        >
+          <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入知识库名称' }]}>
+            <Input placeholder="例如：运维故障经验库" />
+          </Form.Item>
+          <Form.Item label="类型" name="type" rules={[{ required: true }]}>
+            <Select options={SPACE_TYPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item label="描述" name="description">
+            <Input.TextArea rows={3} placeholder="（可选）这个知识库主要沉淀什么内容" />
+          </Form.Item>
+        </Form>
       </Modal>
     </Layout>
   )
