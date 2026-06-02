@@ -80,38 +80,46 @@ export default function AttachmentPanel({
           size="small"
           dataSource={items}
           renderItem={(a: any) => (
-            <List.Item
-              actions={[
-                <Button
-                  key="dl"
-                  size="small"
-                  type="link"
-                  icon={<DownloadOutlined />}
-                  href={`/api/files/${a.file_id}/download`}
-                  target="_blank"
-                >下载</Button>,
-                canWrite && (
-                  <Button
-                    key="rm"
-                    size="small"
-                    type="link"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => Modal.confirm({
-                      title: '移除附件？',
-                      content: '仅断开附件挂载，文件库中的源文件保留',
-                      onOk: () => detach.mutate(a.file_id)
-                    })}
-                  >移除</Button>
-                )
-              ].filter(Boolean) as any}
-            >
-              <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                <Text>{a.original_name}</Text>
+            <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
+              <div style={{ width: '100%', minWidth: 0 }}>
+                {/* 文件名单行，过长省略，hover 显示全名 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                  <PaperClipOutlined style={{ color: '#0d9488', flexShrink: 0 }} />
+                  <Text ellipsis={{ tooltip: a.original_name }} style={{ flex: 1, minWidth: 0 }}>
+                    {a.original_name}
+                  </Text>
+                </div>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {fmtSize(a.file_size)} · {a.uploader_name}
+                  {fmtSize(a.file_size)}{a.uploader_name ? ` · ${a.uploader_name}` : ''}
                 </Text>
-              </Space>
+                {/* 操作按钮另起一行，避免在窄栏挤压文件名 */}
+                <div style={{ marginTop: 2 }}>
+                  <Space size={4}>
+                    <Button
+                      size="small"
+                      type="link"
+                      icon={<DownloadOutlined />}
+                      href={`/api/files/${a.file_id}/download`}
+                      target="_blank"
+                      style={{ padding: '0 4px', height: 22 }}
+                    >下载</Button>
+                    {canWrite && (
+                      <Button
+                        size="small"
+                        type="link"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => Modal.confirm({
+                          title: '移除附件？',
+                          content: '仅断开附件挂载，文件库中的源文件保留',
+                          onOk: () => detach.mutate(a.file_id)
+                        })}
+                        style={{ padding: '0 4px', height: 22 }}
+                      >移除</Button>
+                    )}
+                  </Space>
+                </div>
+              </div>
             </List.Item>
           )}
         />
