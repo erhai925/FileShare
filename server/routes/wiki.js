@@ -32,6 +32,18 @@ async function getWikiSpace(spaceId) {
   );
 }
 
+/**
+ * 知识库是否对当前用户可读：
+ * team/部门知识库对所有登录用户开放只读；其余需 admin / owner / 显式 read 授权。
+ * 写/删等仍走各自的 checkPermission，不在此放开。
+ */
+async function canReadWikiSpace(user, space) {
+  if (user.role === 'admin') return true;
+  if (space.owner_id === user.id) return true;
+  if (space.type === 'team' || space.type === 'department') return true;
+  return checkPermission(user.id, 'space', space.id, 'read');
+}
+
 // ==================== F1 知识库 CRUD ====================
 
 /**
@@ -53,7 +65,8 @@ router.get('/spaces', authenticate, async (req, res) => {
       params.push(type);
     }
     if (req.user.role !== 'admin') {
-      sql += ` AND (s.owner_id = ? OR EXISTS (
+      // 团队/部门知识库全员可见；个人/项目仍需 owner 或显式授权
+      sql += ` AND (s.type IN ('team','department') OR s.owner_id = ? OR EXISTS (
         SELECT 1 FROM permissions p
         WHERE p.resource_type = 'space' AND p.resource_id = s.id
         AND (p.user_id = ? OR p.group_id IN (
@@ -84,9 +97,7 @@ router.post('/spaces', authenticate, async (req, res) => {
     if (!['team', 'department', 'personal', 'project'].includes(type)) {
       return res.status(400).json({ success: false, message: '知识库类型无效' });
     }
-    if ((type === 'team' || type === 'department') && req.user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: '只有管理员可以创建团队/部门知识库' });
-    }
+    // 所有登录用户均可创建任意类型知识库（含团队/部门）
     const result = await db.run(
       `INSERT INTO spaces (name, type, description, owner_id, parent_id, space_kind)
        VALUES (?, ?, ?, ?, ?, 'wiki')`,
@@ -111,9 +122,8 @@ router.get('/spaces/:id', authenticate, async (req, res) => {
     const space = await getWikiSpace(spaceId);
     if (!space) return res.status(404).json({ success: false, message: '知识库不存在' });
 
-    if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
-      const ok = await checkPermission(req.user.id, 'space', spaceId, 'read');
-      if (!ok) return res.status(403).json({ success: false, message: '无访问权限' });
+    if (!(await canReadWikiSpace(req.user, space))) {
+      return res.status(403).json({ success: false, message: '无访问权限' });
     }
 
     const owner = await db.get(`SELECT username, real_name FROM users WHERE id = ?`, [space.owner_id]);
@@ -269,9 +279,8 @@ router.get('/spaces/:id/tree', authenticate, async (req, res) => {
     const space = await getWikiSpace(spaceId);
     if (!space) return res.status(404).json({ success: false, message: '知识库不存在' });
 
-    if (req.user.role !== 'admin' && space.owner_id !== req.user.id) {
-      const ok = await checkPermission(req.user.id, 'space', spaceId, 'read');
-      if (!ok) return res.status(403).json({ success: false, message: '无访问权限' });
+    if (!(await canReadWikiSpace(req.user, space))) {
+      return res.status(403).json({ success: false, message: '无访问权限' });
     }
 
     const includeArchived = req.query.includeArchived === '1';
@@ -1070,6 +1079,7 @@ router.get('/search', authenticate, async (req, res) => {
     // 权限过滤：admin 看全部；否则限制在用户可访问的知识库范围内
     if (req.user.role !== 'admin') {
       where.push(`(p.created_by = ?
+        OR EXISTS (SELECT 1 FROM spaces s WHERE s.id = p.space_id AND s.type IN ('team','department'))
         OR EXISTS (SELECT 1 FROM spaces s WHERE s.id = p.space_id AND s.owner_id = ?)
         OR EXISTS (SELECT 1 FROM permissions pm WHERE pm.resource_type = 'space' AND pm.resource_id = p.space_id
           AND (pm.user_id = ? OR pm.group_id IN (SELECT group_id FROM user_group_members WHERE user_id = ?)) AND pm.permission_type = 'read')

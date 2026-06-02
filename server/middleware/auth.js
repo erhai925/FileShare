@@ -90,8 +90,15 @@ async function checkPermission(userId, resourceType, resourceId, permissionType)
       const page = await db.get('SELECT created_by, space_id FROM wiki_pages WHERE id = ?', [resourceId]);
       if (!page) return false;
       if (page.created_by === userId) return true;
-      const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [page.space_id]);
+      const space = await db.get('SELECT owner_id, type, space_kind FROM spaces WHERE id = ?', [page.space_id]);
       if (space && space.owner_id === userId) return true;
+
+      // 团队/部门知识库：全员可消费（读 / 评论 / 下载），写、删仍受控
+      if (space && space.space_kind === 'wiki'
+        && (space.type === 'team' || space.type === 'department')
+        && ['read', 'comment', 'download'].includes(permissionType)) {
+        return true;
+      }
 
       // 页面级直接权限
       const direct = await db.get(
@@ -300,6 +307,23 @@ async function getBatchWikiPermissions(userId, pages) {
     for (const p of pages) {
       if (ownedSet.has(p.space_id)) {
         result[p.id] = { read: true, write: true, delete: true, comment: true, download: true };
+      }
+    }
+  }
+
+  // 团队/部门知识库：全员可消费（读 / 评论 / 下载）
+  if (spaceIds.length > 0) {
+    const openRows = await db.query(
+      `SELECT id FROM spaces WHERE id IN (${spaceIds.map(() => '?').join(',')})
+       AND space_kind = 'wiki' AND type IN ('team','department')`,
+      spaceIds
+    );
+    const openSet = new Set(openRows.map(s => s.id));
+    for (const p of pages) {
+      if (openSet.has(p.space_id)) {
+        result[p.id].read = true;
+        result[p.id].comment = true;
+        result[p.id].download = true;
       }
     }
   }
