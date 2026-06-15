@@ -148,7 +148,7 @@ export default function FileDetail() {
     }),
     onSuccess: (response) => {
       message.success('分享链接创建成功')
-      const shareToken = response.data.data.shareToken
+      const shareToken = response.data.shareToken
       const shareUrl = `${window.location.origin}/share/${shareToken}`
       Modal.info({
         title: '分享链接',
