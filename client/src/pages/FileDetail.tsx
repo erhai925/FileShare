@@ -150,13 +150,37 @@ export default function FileDetail() {
       message.success('分享链接创建成功')
       const shareToken = response.data.shareToken
       const shareUrl = `${window.location.origin}/share/${shareToken}`
+      const copyShareUrl = async () => {
+        try {
+          if (typeof navigator.clipboard?.writeText === 'function') {
+            await navigator.clipboard.writeText(shareUrl)
+          } else {
+            const ta = document.createElement('textarea')
+            ta.value = shareUrl
+            ta.style.position = 'fixed'
+            ta.style.opacity = '0'
+            document.body.appendChild(ta)
+            ta.select()
+            document.execCommand('copy')
+            document.body.removeChild(ta)
+          }
+          message.success('分享链接已复制')
+        } catch {
+          message.error('复制失败，请手动选中复制')
+        }
+      }
       Modal.info({
         title: '分享链接',
         content: (
           <div>
             <p>分享链接：</p>
-            <Input value={shareUrl} readOnly />
-            <p style={{ marginTop: 16 }}>请复制链接分享给他人</p>
+            <Input.Search
+              value={shareUrl}
+              readOnly
+              enterButton="复制"
+              onSearch={copyShareUrl}
+            />
+            <p style={{ marginTop: 16 }}>点击右侧"复制"按钮，即可把链接分享给他人</p>
           </div>
         ),
         width: 500
