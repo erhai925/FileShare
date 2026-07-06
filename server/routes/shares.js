@@ -232,6 +232,102 @@ router.delete('/:shareId', authenticate, async (req, res) => {
   }
 });
 
+// 确保全局下载令牌存储与清理器就绪（与 files.js 中的初始化语义一致，谁先初始化谁设清理定时器）
+function ensureDownloadTokenStore() {
+  if (!global.downloadTokens) {
+    global.downloadTokens = new Map();
+    setInterval(() => {
+      const now = Date.now();
+      for (const [k, v] of global.downloadTokens) {
+        if (now > v.expiresAt) global.downloadTokens.delete(k);
+      }
+    }, 10 * 60 * 1000).unref();
+  }
+}
+
+// 分享落地页：获取分享元信息（公开，无需登录）
+// 注意：本路由为 GET /:shareToken，必须放在 /my-shares、/:shareId/access-logs 等具体 GET 路由之后，避免抢占匹配
+router.get('/:shareToken', async (req, res) => {
+  try {
+    const { shareToken } = req.params;
+    const share = await db.get('SELECT * FROM external_shares WHERE share_token = ?', [shareToken]);
+    if (!share) {
+      return res.status(404).json({ success: false, message: '分享链接不存在' });
+    }
+    const expired = !!(share.expires_at && new Date(share.expires_at) < new Date());
+    let resourceName = null;
+    let resourceSize = null;
+    if (share.resource_type === 'file') {
+      const file = await db.get(
+        'SELECT original_name, file_size FROM files WHERE id = ? AND deleted_at IS NULL',
+        [share.resource_id]
+      );
+      if (!file) {
+        return res.status(404).json({ success: false, message: '文件不存在或已删除' });
+      }
+      resourceName = file.original_name;
+      resourceSize = file.file_size;
+    }
+    res.json({
+      success: true,
+      data: {
+        resourceType: share.resource_type,
+        resourceName,
+        resourceSize,
+        requirePassword: !!share.password_hash,
+        requireEmail: !!share.allowed_emails,
+        expired
+      }
+    });
+  } catch (error) {
+    console.error('获取分享信息失败:', error);
+    res.status(500).json({ success: false, message: '获取分享信息失败' });
+  }
+});
+
+// 分享下载：需先通过 POST /:shareToken/access 换取 accessToken；此处校验令牌后
+// 以分享创建者身份颁发一次性下载令牌，302 到 /api/files/download 复用其解密与流式逻辑
+router.get('/:shareToken/download', async (req, res) => {
+  try {
+    const { shareToken } = req.params;
+    const { token } = req.query;
+    if (!token || typeof token !== 'string') {
+      return res.status(401).json({ success: false, message: '缺少访问令牌，请先验证分享' });
+    }
+    let payload;
+    try {
+      payload = jwt.verify(token, process.env.JWT_SECRET || 'default-secret');
+    } catch (e) {
+      return res.status(401).json({ success: false, message: '访问令牌无效或已过期，请重新验证' });
+    }
+    const share = await db.get('SELECT * FROM external_shares WHERE share_token = ?', [shareToken]);
+    if (!share || share.id !== payload.shareId) {
+      return res.status(403).json({ success: false, message: '令牌与分享不匹配' });
+    }
+    if (share.expires_at && new Date(share.expires_at) < new Date()) {
+      return res.status(403).json({ success: false, message: '分享链接已过期' });
+    }
+    if (share.resource_type !== 'file') {
+      return res.status(400).json({ success: false, message: '暂不支持该类型分享的下载' });
+    }
+    const file = await db.get('SELECT id FROM files WHERE id = ? AND deleted_at IS NULL', [share.resource_id]);
+    if (!file) {
+      return res.status(404).json({ success: false, message: '文件不存在或已删除' });
+    }
+    ensureDownloadTokenStore();
+    const raw = generateToken(24);
+    global.downloadTokens.set(raw, {
+      fileId: Number(share.resource_id),
+      userId: share.created_by,
+      expiresAt: Date.now() + 5 * 60 * 1000 // 5 分钟，足够发起下载
+    });
+    return res.redirect(302, `/api/files/download/${share.resource_id}?token=${raw}`);
+  } catch (error) {
+    console.error('分享下载失败:', error);
+    res.status(500).json({ success: false, message: '分享下载失败' });
+  }
+});
+
 module.exports = router;
 
 

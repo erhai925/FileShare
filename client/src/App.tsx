@@ -13,6 +13,7 @@ import FileDetail from './pages/FileDetail'
 import Trash from './pages/Trash'
 import Admin from './pages/Admin'
 import Profile from './pages/Profile'
+import SharePage from './pages/SharePage'
 import WikiHome from './pages/wiki/WikiHome'
 import WikiSpace from './pages/wiki/WikiSpace'
 import WikiPage from './pages/wiki/WikiPage'
@@ -66,6 +67,8 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* 公开分享落地页：外部用户无需登录，置于 PrivateRoute 之外 */}
+      <Route path="/share/:token" element={<SharePage />} />
       <Route
         path="/"
         element={
