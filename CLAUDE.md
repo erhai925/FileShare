@@ -126,6 +126,21 @@ Wiki module (v1.0.14+):
 - `PUPPETEER_SKIP_DOWNLOAD` — set to `1` in offline / restricted-network deploys to skip Chromium auto-download during `npm install`. Then point puppeteer at a system-installed Chrome via `PUPPETEER_EXECUTABLE_PATH`.
 - `PUPPETEER_EXECUTABLE_PATH` — absolute path to a Chrome/Chromium binary (e.g. `/usr/bin/google-chrome` on Linux, `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` on macOS). Required if `PUPPETEER_SKIP_DOWNLOAD=1`.
 
+## 部署到 66 生产机（内网）
+
+生产环境跑在 66 机器，部署方法在此固化，任何会话/新窗口照此执行，无需再问。
+
+- **目标机**：`root@10.1.1.66`，项目目录 `/home/FileShare-main`，进程名 `fileshare`（pm2）。
+- **认证**：已配置本机 SSH 公钥（`~/.ssh/id_ed25519.pub`）免密登录，直接 `ssh root@10.1.1.66` 即可，**不需要密码**。若哪天免密失效，重新 `ssh-copy-id root@10.1.1.66`（密码不写入仓库，向管理员索取）。
+- **前端改动（client 下文件）部署流程**：
+  1. 本地 `npm run client:build`，记下新生成的 `client/dist/assets/index-*.js`（和变化时的 `index-*.css`）哈希。
+  2. **红线三基线**：覆盖前先 `ssh root@10.1.1.66 'cd /home/FileShare-main/client/dist && ls assets && md5sum index.html'`，确认远端与上次部署一致、无 prod 漂移；并 `cp -r` 一份 dist 到 `backups/`。
+  3. 删远端旧 hash 的 js（`rm -f client/dist/assets/index-<旧>.js`），`scp` 新 js + `index.html`（css 变了才一并推）。**单文件 scp、不用 `-r`**，避免 macOS 产生 `._*` AppleDouble 垃圾。
+  4. 校验远端 `md5sum` 与本地一致，`curl -s http://localhost:3000/ | grep index-<新>.js` 确认已生效。
+  5. dist 是 express.static 从磁盘读、`index.html` 设了 no-cache，**用户刷新即生效，无需重启 pm2**。
+- **后端改动（server 下文件）部署**：同样先 md5 取基线，`scp` 对应文件后 `ssh root@10.1.1.66 'cd /home/FileShare-main && pm2 restart fileshare'`。
+- **DB schema 变更**：跟随版本升级脚本，远端执行对应 `npm run upgrade:1.0.X`（详见上文 Development Commands）。
+
 ## Language
 
 This is a Chinese-language project. All UI text, error messages, comments, and documentation are in Chinese (Simplified). Maintain this convention when adding code.
