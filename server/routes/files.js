@@ -322,6 +322,30 @@ router.post('/upload', authenticate, (req, res, next) => {
       return res.status(500).json({ success: false, message: '生成文件哈希失败' });
     }
     
+    // 内容去重：同一目录下已存在相同哈希的文件时，先退回 409 让用户确认，
+    // 避免"以为没反应"的重复提交把同一份文件反复入库。用户确认后带 force=1 重传。
+    // 仅在写盘前拦截，此时尚未产生任何存储副本。
+    const forceUpload = req.body.force === '1' || req.body.force === 'true' || req.body.force === true;
+    if (!forceUpload) {
+      const dup = await db.get(
+        `SELECT id, original_name, created_at FROM files
+         WHERE hash = ? AND deleted_at IS NULL
+           AND IFNULL(folder_id, -1) = IFNULL(?, -1)
+           AND IFNULL(space_id, -1) = IFNULL(?, -1)
+         LIMIT 1`,
+        [fileHash, folderId || null, spaceId || null]
+      );
+      if (dup) {
+        await fs.unlink(file.path).catch(() => {});
+        return safeRespond(409, {
+          success: false,
+          code: 'DUPLICATE_CONTENT',
+          message: `当前目录已存在内容完全相同的文件「${dup.original_name}」`,
+          data: { existingFileId: dup.id, existingName: dup.original_name, existingCreatedAt: dup.created_at }
+        });
+      }
+    }
+
     // 加密文件（支持异步外部SDK，明文模式时直接返回原Buffer）
     let encryptionMode;
     let encryptedBuffer;
@@ -1661,6 +1685,17 @@ router.post('/upload/complete', authenticate, async (req, res) => {
     // 分块上传的 file_name 来自客户端 JSON（已是 UTF-8），直接使用，不做 latin1 转换
     const originalFileName = upload.file_name || '';
 
+    // 内容去重：与普通上传不同，此处字节已全部传完并合并落盘，退回 409 只会
+    // 白白浪费整次传输，故不阻拦，仅在响应里回带重复信息由前端提示，用户自行决定是否删除。
+    const dupExisting = await db.get(
+      `SELECT id, original_name FROM files
+       WHERE hash = ? AND deleted_at IS NULL
+         AND IFNULL(folder_id, -1) = IFNULL(?, -1)
+         AND IFNULL(space_id, -1) = IFNULL(?, -1)
+       LIMIT 1`,
+      [fileHash, upload.folder_id || null, upload.space_id || null]
+    );
+
     // 保存文件记录到数据库
     const result = await db.run(
       `INSERT INTO files (name, original_name, folder_id, space_id, file_path, file_size, mime_type, hash, created_by, updated_by)
@@ -1720,7 +1755,11 @@ router.post('/upload/complete', authenticate, async (req, res) => {
       data: {
         fileId: result.lastID,
         fileName: originalFileName,
-        fileSize: upload.file_size
+        fileSize: upload.file_size,
+        // 命中内容重复时回带，供前端提示；为 null 表示无重复
+        duplicateOf: dupExisting
+          ? { fileId: dupExisting.id, name: dupExisting.original_name }
+          : null
       }
     });
 

@@ -241,16 +241,19 @@ function decryptFile(encryptedBuffer) {
   }
 }
 
-// 生成文件哈希（使用SM3，国密算法）
+/**
+ * 生成文件哈希（SHA-256）
+ *
+ * 曾用 SM3（国密），已于 2026-07-20 统一为 SHA-256，原因有二：
+ * 1. 算法不一致导致哈希不可比：普通上传走本函数（SM3），而分块上传走
+ *    encryptFileStreaming 的流式哈希（SHA-256），同一份文件经两条路径
+ *    得到不同哈希，且都是 64 位 hex，无法从值本身分辨，按哈希去重必然漏判。
+ * 2. sm-crypto 不支持流式，且实现需 buffer.toString('hex') 把整个文件转成
+ *    十六进制字符串，内存翻倍，大文件有 OOM 风险。
+ * 若将来确有国密合规要求，需连同 encryptFileStreaming 一起改造，不能只改这里。
+ */
 function generateHash(buffer) {
-  // 如果支持SM3，优先使用SM3
-  try {
-    const sm3 = require('sm-crypto').sm3;
-    return sm3(buffer.toString('hex'));
-  } catch (error) {
-    // 如果不支持SM3，回退到SHA-256
-    return crypto.createHash('sha256').update(buffer).digest('hex');
-  }
+  return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
 // 生成随机Token

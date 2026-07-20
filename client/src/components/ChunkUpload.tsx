@@ -19,6 +19,8 @@ interface CompleteUploadData {
   fileId: number
   fileName: string
   fileSize?: number
+  /** 同目录已存在内容相同的文件时由服务端回带；分块上传字节已传完，故只提示不阻拦 */
+  duplicateOf?: { fileId: number; name: string } | null
 }
 
 interface ChunkUploadProps {
@@ -239,7 +241,14 @@ export default function ChunkUpload({ onSuccess, folderId, spaceId, chunkSize = 
         const result = await completeUpload(currentUploadId)
         setStatusText('')
         message.success('文件上传成功')
-        
+        // 内容重复只提示不阻拦：字节已全部传完，退回重传毫无意义，由用户决定是否删除
+        if (result.duplicateOf) {
+          message.warning(
+            `注意：当前目录已存在内容相同的文件「${result.duplicateOf.name}」，如不需要可自行删除本次上传的副本`,
+            8
+          )
+        }
+
         if (onSuccess) {
           onSuccess(result.fileId, result.fileName)
         }

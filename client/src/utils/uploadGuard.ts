@@ -88,6 +88,31 @@ export function reportUploadProgress(
   return percent
 }
 
+/** 撤掉常驻的进度提示（弹确认框前必须先撤，否则 loading 会一直压在上面） */
+export function clearUploadProgress(messageApi: MessageInstance, key: string) {
+  messageApi.destroy(key)
+}
+
+/**
+ * 服务端以 409 DUPLICATE_CONTENT 告知同目录已存在相同内容的文件时，
+ * 询问用户是否仍要上传。返回 true 表示带 force 重传。
+ */
+export function confirmDuplicateUpload(
+  detail: string, modalApi: ModalApi
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    modalApi.confirm({
+      title: '该文件已存在',
+      content: `${detail}。继续上传会在系统里留下多份内容相同的副本。仍要上传吗？`,
+      okText: '仍然上传',
+      cancelText: '取消上传',
+      okButtonProps: { danger: true },
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false)
+    })
+  })
+}
+
 /** 收尾：用同一个 key 覆盖掉常驻的 loading 提示 */
 export function finishUploadProgress(
   messageApi: MessageInstance, key: string, ok: boolean, content: string

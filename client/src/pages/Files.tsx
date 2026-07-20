@@ -11,7 +11,8 @@ import ChunkUpload from '../components/ChunkUpload'
 import { formatDateTime } from '../utils/date'
 import {
   createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES,
-  inflightKey, beginInflight, endInflight, reportUploadProgress, finishUploadProgress
+  inflightKey, beginInflight, endInflight, reportUploadProgress, finishUploadProgress,
+  clearUploadProgress, confirmDuplicateUpload
 } from '../utils/uploadGuard'
 import type { UploadProps } from 'antd'
 
@@ -315,18 +316,36 @@ export default function Files() {
     customRequest: async ({ file, onSuccess, onError, onProgress }) => {
       const f = file as File
       const key = inflightKey(f)
-      const formData = new FormData()
-      formData.append('file', f)
-      formData.append('spaceId', String(uploadSpaceId ?? ''))
-      formData.append('folderId', String(uploadFolderId ?? ''))
-      try {
-        const res = await api.post('/files/upload', formData, {
+      const post = (force: boolean) => {
+        const formData = new FormData()
+        formData.append('file', f)
+        formData.append('spaceId', String(uploadSpaceId ?? ''))
+        formData.append('folderId', String(uploadFolderId ?? ''))
+        if (force) formData.append('force', '1')
+        return api.post('/files/upload', formData, {
           timeout: 300000,
           onUploadProgress: (e) => {
             const percent = reportUploadProgress(e, f, messageApi, key)
             onProgress?.({ percent })
           }
         })
+      }
+      try {
+        let res: unknown
+        try {
+          res = await post(false)
+        } catch (err: any) {
+          // 409：同目录已有相同内容的文件，问过用户再决定是否带 force 重传
+          if (err?.code !== 'DUPLICATE_CONTENT') throw err
+          clearUploadProgress(messageApi, key)
+          const goOn = await confirmDuplicateUpload(err.message || '当前目录已存在相同内容的文件', modalApi)
+          if (!goOn) {
+            messageApi.info(`已取消上传「${f.name}」`)
+            onError?.(new Error('用户取消：文件重复'))
+            return
+          }
+          res = await post(true)
+        }
         const data = res as any
         if (data?.success) {
           finishUploadProgress(messageApi, key, true, data.message || `${f.name} 上传成功`)
