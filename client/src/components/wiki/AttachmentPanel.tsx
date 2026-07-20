@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { List, Button, Upload, Space, message, Empty, Modal, Typography } from 'antd'
+import { App, List, Button, Upload, Space, message, Empty, Modal, Typography } from 'antd'
 import {
   PaperClipOutlined, UploadOutlined, DeleteOutlined, DownloadOutlined
 } from '@ant-design/icons'
 import api from '../../services/api'
 import { wikiApi } from '../../services/wikiService'
+import ChunkUpload from '../ChunkUpload'
+import { askUploadMode } from '../../utils/uploadGuard'
 
 const { Text } = Typography
 
@@ -21,7 +23,10 @@ export default function AttachmentPanel({
   pageId, canWrite
 }: { pageId: number; canWrite?: boolean }) {
   const qc = useQueryClient()
+  const { message: messageApi, modal: modalApi } = App.useApp()
   const [uploading, setUploading] = useState(false)
+  const [chunkVisible, setChunkVisible] = useState(false)
+  const [chunkFile, setChunkFile] = useState<File | null>(null)
 
   const { data } = useQuery({
     queryKey: ['wiki', 'attachments', pageId],
@@ -36,6 +41,31 @@ export default function AttachmentPanel({
     },
     onError: (e: any) => message.error(e?.message || '移除失败')
   })
+
+  /** 大文件走分块上传：拿到 fileId 后同样挂到本页面 */
+  const attachExisting = async (fileId: number) => {
+    try {
+      await wikiApi.attachFile(pageId, fileId)
+      messageApi.success('附件已添加')
+      qc.invalidateQueries({ queryKey: ['wiki', 'attachments', pageId] })
+    } catch (e: any) {
+      messageApi.error(e?.message || '附件关联失败')
+    } finally {
+      setChunkVisible(false)
+      setChunkFile(null)
+    }
+  }
+
+  /** 上传入口：先判定大小，超阈值转分块上传，其余走普通上传 */
+  const beforeUpload = async (file: File) => {
+    const mode = await askUploadMode(file, modalApi)
+    if (mode === 'chunk') {
+      setChunkFile(file)
+      setChunkVisible(true)
+      return Upload.LIST_IGNORE
+    }
+    return handleUpload(file)
+  }
 
   const handleUpload = async (file: File) => {
     setUploading(true)
@@ -66,7 +96,7 @@ export default function AttachmentPanel({
       <Space style={{ marginBottom: 8, width: '100%', justifyContent: 'space-between' }}>
         <Text strong><PaperClipOutlined /> 附件 ({items.length})</Text>
         {canWrite && (
-          <Upload beforeUpload={handleUpload} showUploadList={false}>
+          <Upload beforeUpload={beforeUpload} showUploadList={false}>
             <Button size="small" icon={<UploadOutlined />} loading={uploading}>
               添加附件
             </Button>
@@ -124,6 +154,20 @@ export default function AttachmentPanel({
           )}
         />
       )}
+      <Modal
+        title="大文件上传（支持断点续传）"
+        open={chunkVisible}
+        onCancel={() => { setChunkVisible(false); setChunkFile(null) }}
+        footer={null}
+        destroyOnClose
+      >
+        <ChunkUpload
+          messageApi={messageApi}
+          initialFile={chunkFile}
+          onInitialFileConsumed={() => setChunkFile(null)}
+          onSuccess={(fileId) => attachExisting(fileId)}
+        />
+      </Modal>
     </div>
   )
 }

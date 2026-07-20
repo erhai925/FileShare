@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { App, Table, Button, Upload, Space, Input, message, Modal, Form, Select, Popconfirm } from 'antd'
 import { UploadOutlined, SearchOutlined, FolderOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -9,13 +9,12 @@ import FilePreview from '../components/FilePreview'
 import FileActions from '../components/FileActions'
 import ChunkUpload from '../components/ChunkUpload'
 import { formatDateTime } from '../utils/date'
+import { createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES } from '../utils/uploadGuard'
 import type { UploadProps } from 'antd'
 
 const { Option } = Select
 /** 根目录在 Select 中用空字符串表示，避免 antd 的 value 不能为 null 的警告 */
 const ROOT_FOLDER_VALUE = ''
-/** 超过该大小（50MB）时提示用户考虑使用大文件上传 */
-const LARGE_FILE_THRESHOLD_BYTES = 50 * 1024 * 1024
 
 // File System Access API 类型定义
 interface FileSystemFileHandle {
@@ -38,7 +37,11 @@ interface WindowWithFileSystem extends Window {
 }
 
 export default function Files() {
-  const { message: messageApi } = App.useApp()
+  const { message: messageApi, modal: modalApi } = App.useApp()
+  /** 一批多选只弹一次「选择上传方式」 */
+  const askUploadModeRef = useRef(createBatchUploadModeAsker())
+  /** 大文件上传窗口一次只能接手一个文件，记录本批是否已接手 */
+  const chunkHandoffRef = useRef<{ list: unknown; taken: boolean } | null>(null)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [debouncedKeyword, setDebouncedKeyword] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -343,36 +346,29 @@ export default function Files() {
         const error = info.file.error
         const errorMsg = error?.message || `${info.file.name} 上传失败`
         message.error(errorMsg)
-        if (info.file.size && info.file.size > 50 * 1024 * 1024) {
+        if (info.file.size && info.file.size > LARGE_FILE_THRESHOLD_BYTES) {
           message.info('大文件建议使用「大文件上传（断点续传）」')
         }
       }
     },
-    beforeUpload: (file) => {
-      const isLt10GB = file.size / 1024 / 1024 / 1024 < 10
-      if (!isLt10GB) {
-        message.error('文件大小不能超过10GB，请使用「大文件上传」')
-        return false
+    beforeUpload: async (file, fileList) => {
+      const mode = await askUploadModeRef.current(file, fileList, modalApi)
+      if (mode === 'normal') return true
+
+      // 转大文件上传：窗口一次只能接手一个文件，同批其余大文件提示单独上传
+      if (chunkHandoffRef.current?.list !== fileList) {
+        chunkHandoffRef.current = { list: fileList, taken: false }
       }
-      if (file.size >= LARGE_FILE_THRESHOLD_BYTES) {
-        return new Promise<boolean>((resolve) => {
-          Modal.confirm({
-            title: '选择上传方式',
-            content: `当前文件约 ${(file.size / 1024 / 1024).toFixed(1)} MB，建议使用「大文件上传」以获得断点续传。是否仍使用普通上传？`,
-            okText: '仍使用普通上传',
-            cancelText: '使用大文件上传',
-            onOk: () => resolve(true),
-            onCancel: () => {
-              setChunkUploadPendingFile(file)
-              setChunkUploadSpaceId(uploadSpaceId)
-              setChunkUploadFolderId(uploadFolderId ?? undefined)
-              setChunkUploadVisible(true)
-              resolve(false)
-            }
-          })
-        })
+      if (chunkHandoffRef.current.taken) {
+        messageApi.info(`「${file.name}」未上传：大文件上传一次只处理一个文件，请稍后单独上传`)
+        return Upload.LIST_IGNORE
       }
-      return true
+      chunkHandoffRef.current.taken = true
+      setChunkUploadPendingFile(file)
+      setChunkUploadSpaceId(uploadSpaceId)
+      setChunkUploadFolderId(uploadFolderId ?? undefined)
+      setChunkUploadVisible(true)
+      return Upload.LIST_IGNORE
     }
   }
 
