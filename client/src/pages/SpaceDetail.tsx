@@ -18,7 +18,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import type { UploadProps } from 'antd'
-import { createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES } from '../utils/uploadGuard'
+import {
+  createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES,
+  inflightKey, beginInflight, endInflight, reportUploadProgress, finishUploadProgress
+} from '../utils/uploadGuard'
 
 const { Option } = Select
 const { Title, Text } = Typography
@@ -282,44 +285,65 @@ export default function SpaceDetail() {
   const spaceUploadProps: UploadProps = {
     name: 'file',
     multiple: true,
-    showUploadList: false,
-    customRequest: async ({ file, onSuccess, onError }) => {
+    // 原为 false：上传期间页面毫无反馈，用户以为没反应就反复点，同一份文件多次入库
+    showUploadList: true,
+    customRequest: async ({ file, onSuccess, onError, onProgress }) => {
+      const f = file as File
+      const key = inflightKey(f)
       const formData = new FormData()
-      formData.append('file', file as File)
+      formData.append('file', f)
       formData.append('spaceId', String(spaceIdNum ?? ''))
       // 上传到当前选中文件夹；「全部文件」视为根目录
       formData.append('folderId', String(typeof selectedKey === 'number' ? selectedKey : ''))
       try {
-        const res = await api.post('/files/upload', formData, { timeout: 300000 })
+        const res = await api.post('/files/upload', formData, {
+          timeout: 300000,
+          onUploadProgress: (e) => {
+            const percent = reportUploadProgress(e, f, messageApi, key)
+            onProgress?.({ percent })
+          }
+        })
         const data = res as any
-        if (data?.success) onSuccess?.(data); else onError?.(new Error(data?.message || '上传失败'))
+        if (data?.success) {
+          finishUploadProgress(messageApi, key, true, data.message || `${f.name} 上传成功`)
+          onSuccess?.(data)
+        } else {
+          const m = data?.message || '上传失败'
+          finishUploadProgress(messageApi, key, false, `${f.name}：${m}`)
+          onError?.(new Error(m))
+        }
       } catch (err: any) {
         const msg = typeof err === 'string' ? err : (err?.message || err?.response?.data?.message || '上传失败')
+        finishUploadProgress(messageApi, key, false, `${f.name}：${msg}`)
         onError?.(new Error(msg))
+      } finally {
+        endInflight(f)
       }
     },
     onChange(info) {
+      // 成功/失败文案已由 customRequest 就地给出，此处只刷新列表，避免重复提示
       if (info.file.status === 'done') {
-        const r = info.file.response
-        if (r?.success) {
-          message.success(r.message || `${info.file.name} 上传成功`)
+        if (info.file.response?.success) {
           refetchSpaceDetail()
           refetchFolders()
           if (mode === 'folder') refetchFolderFiles()
           queryClient.invalidateQueries({ queryKey: ['files'] })
-        } else {
-          message.error(r?.message || `${info.file.name} 上传失败`)
         }
       } else if (info.file.status === 'error') {
-        message.error(info.file.error?.message || `${info.file.name} 上传失败`)
         if (info.file.size && info.file.size > LARGE_FILE_THRESHOLD_BYTES) {
           message.info('大文件建议使用「大文件上传（断点续传）」')
         }
       }
     },
     beforeUpload: async (file, fileList) => {
+      // 同名同大小的文件正在传输中：拦掉重复提交，避免同一份文件多次入库
+      if (!beginInflight(file)) {
+        messageApi.warning(`「${file.name}」正在上传中，请勿重复提交`)
+        return Upload.LIST_IGNORE
+      }
       const mode = await askUploadModeRef.current(file, fileList, modalApi)
       if (mode === 'normal') return true
+      endInflight(file) // 转大文件上传，普通上传的登记就地释放
 
       // 转大文件上传：窗口一次只能接手一个文件，同批其余大文件提示单独上传
       if (chunkHandoffRef.current?.list !== fileList) {

@@ -7,7 +7,9 @@ import {
 import api from '../../services/api'
 import { wikiApi } from '../../services/wikiService'
 import ChunkUpload from '../ChunkUpload'
-import { askUploadMode } from '../../utils/uploadGuard'
+import {
+  askUploadMode, inflightKey, reportUploadProgress, finishUploadProgress
+} from '../../utils/uploadGuard'
 
 const { Text } = Typography
 
@@ -74,15 +76,18 @@ export default function AttachmentPanel({
       fd.append('file', file)
       // 复用现有文件上传接口
       const r: any = await api.post('/files/upload', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (e) => reportUploadProgress(e, file, messageApi, inflightKey(file))
       })
       const fileId = r?.data?.fileId || r?.data?.id || r?.fileId
       if (!fileId) throw new Error('上传未返回 fileId')
       await wikiApi.attachFile(pageId, fileId)
-      message.success('附件已添加')
+      // 用同一个 key 收尾，替换掉常驻的进度提示
+      finishUploadProgress(messageApi, inflightKey(file), true, '附件已添加')
       qc.invalidateQueries({ queryKey: ['wiki', 'attachments', pageId] })
     } catch (e: any) {
-      message.error(e?.message || '上传失败')
+      // 进度提示是 duration:0 常驻的，失败时必须就地关掉，否则一直挂在页面上
+      finishUploadProgress(messageApi, inflightKey(file), false, e?.message || '上传失败')
     } finally {
       setUploading(false)
     }

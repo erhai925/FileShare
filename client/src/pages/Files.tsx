@@ -9,7 +9,10 @@ import FilePreview from '../components/FilePreview'
 import FileActions from '../components/FileActions'
 import ChunkUpload from '../components/ChunkUpload'
 import { formatDateTime } from '../utils/date'
-import { createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES } from '../utils/uploadGuard'
+import {
+  createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES,
+  inflightKey, beginInflight, endInflight, reportUploadProgress, finishUploadProgress
+} from '../utils/uploadGuard'
 import type { UploadProps } from 'antd'
 
 const { Option } = Select
@@ -309,18 +312,29 @@ export default function Files() {
   const uploadProps: UploadProps = {
     name: 'file',
     multiple: true,
-    customRequest: async ({ file, onSuccess, onError }) => {
+    customRequest: async ({ file, onSuccess, onError, onProgress }) => {
+      const f = file as File
+      const key = inflightKey(f)
       const formData = new FormData()
-      formData.append('file', file as File)
+      formData.append('file', f)
       formData.append('spaceId', String(uploadSpaceId ?? ''))
       formData.append('folderId', String(uploadFolderId ?? ''))
       try {
-        const res = await api.post('/files/upload', formData, { timeout: 300000 })
+        const res = await api.post('/files/upload', formData, {
+          timeout: 300000,
+          onUploadProgress: (e) => {
+            const percent = reportUploadProgress(e, f, messageApi, key)
+            onProgress?.({ percent })
+          }
+        })
         const data = res as any
         if (data?.success) {
+          finishUploadProgress(messageApi, key, true, data.message || `${f.name} 上传成功`)
           onSuccess?.(data)
         } else {
-          onError?.(new Error(data?.message || '上传失败'))
+          const m = data?.message || '上传失败'
+          finishUploadProgress(messageApi, key, false, `${f.name}：${m}`)
+          onError?.(new Error(m))
         }
       } catch (err: any) {
         const msg = typeof err === 'string' ? err : (err?.message || err?.response?.data?.message || '上传失败')
@@ -330,30 +344,34 @@ export default function Files() {
         let fullMsg = msg
         if (hint) fullMsg += `；${hint}`
         if (detailStr) fullMsg += `（${detailStr}）`
+        finishUploadProgress(messageApi, key, false, `${f.name}：${fullMsg}`)
         onError?.(new Error(fullMsg))
+      } finally {
+        endInflight(f)
       }
     },
     onChange(info) {
+      // 成功/失败的文案已由 customRequest 里的 finishUploadProgress 就地给出，
+      // 此处只负责刷新列表与大文件补充建议，避免同一结果弹两条提示
       if (info.file.status === 'done') {
-        const response = info.file.response
-        if (response?.success) {
-          message.success(response.message || `${info.file.name} 上传成功`)
+        if (info.file.response?.success) {
           queryClient.invalidateQueries({ queryKey: ['files'] })
-        } else {
-          message.error(response?.message || `${info.file.name} 上传失败`)
         }
       } else if (info.file.status === 'error') {
-        const error = info.file.error
-        const errorMsg = error?.message || `${info.file.name} 上传失败`
-        message.error(errorMsg)
         if (info.file.size && info.file.size > LARGE_FILE_THRESHOLD_BYTES) {
           message.info('大文件建议使用「大文件上传（断点续传）」')
         }
       }
     },
     beforeUpload: async (file, fileList) => {
+      // 同名同大小的文件正在传输中：拦掉重复提交，避免同一份文件多次入库
+      if (!beginInflight(file)) {
+        messageApi.warning(`「${file.name}」正在上传中，请勿重复提交`)
+        return Upload.LIST_IGNORE
+      }
       const mode = await askUploadModeRef.current(file, fileList, modalApi)
       if (mode === 'normal') return true
+      endInflight(file) // 转大文件上传，普通上传的登记就地释放
 
       // 转大文件上传：窗口一次只能接手一个文件，同批其余大文件提示单独上传
       if (chunkHandoffRef.current?.list !== fileList) {
