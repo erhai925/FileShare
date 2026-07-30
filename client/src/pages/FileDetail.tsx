@@ -28,42 +28,16 @@ import api from '../services/api'
 import { formatDateTime } from '../utils/date'
 import { useAuthStore } from '../stores/authStore'
 import FilePreview from '../components/FilePreview'
+import { downloadFile } from '../utils/download'
 
-// 下载文件的辅助函数
-const downloadFile = async (fileId: string, fileName: string) => {
-  const token = useAuthStore.getState().token
-  if (!token) {
-    message.error('未登录，请先登录')
-    return
-  }
-  const hide = message.loading('正在准备下载，请稍候...', 0)
+// 下载文件：走浏览器原生下载，不再 fetch+blob（大文件会因内存压力中断留下 .crdownload）
+const handleDownloadFile = async (fileId: string) => {
   try {
-    const response = await fetch(`/api/files/download/${fileId}`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    })
-    
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.message || '下载失败')
-    }
-    
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = fileName || 'download'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-    hide()
-    message.success('下载成功')
+    await downloadFile(fileId)
+    message.success('已开始下载，请查看浏览器下载列表')
   } catch (error: any) {
     console.error('下载失败:', error)
-    hide()
-    message.error(error.message || '下载失败')
+    message.error(error?.message || '下载失败')
   }
 }
 
@@ -284,7 +258,7 @@ export default function FileDetail() {
               content: '下载的文件需要根据客户实际情况和主胶片最新版本进行更新！',
               okText: '确定下载',
               cancelText: '取消',
-              onOk: () => downloadFile(fileId!, file.original_name)
+              onOk: () => handleDownloadFile(fileId!)
             })
           }}
         >

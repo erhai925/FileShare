@@ -7,15 +7,15 @@ import {
 import {
   FolderOutlined, PlusOutlined, UserOutlined, SettingOutlined, UploadOutlined,
   DeleteOutlined, ArrowLeftOutlined, SearchOutlined, FolderOpenOutlined,
-  MenuFoldOutlined, MenuUnfoldOutlined
+  MenuFoldOutlined, MenuUnfoldOutlined, DownloadOutlined
 } from '@ant-design/icons'
 import FilePreview from '../components/FilePreview'
 import ChunkUpload from '../components/ChunkUpload'
 import FolderTree, { FolderNode, SelectedKey } from '../components/space/FolderTree'
 import FileList from '../components/space/FileList'
 import { formatDateTime } from '../utils/date'
+import { downloadFile, downloadFilesAsZip } from '../utils/download'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import type { UploadProps } from 'antd'
 import {
@@ -87,7 +87,6 @@ export default function SpaceDetail() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { token } = useAuthStore()
 
   // —— 核心状态：统一替代原三套独立选择
   const initialFolderParam = searchParams.get('folderId')
@@ -476,20 +475,32 @@ export default function SpaceDetail() {
     queryClient.invalidateQueries({ queryKey: ['files'] })
   }
 
-  const handleDownload = async (fileId: number, fileName: string) => {
-    const hide = message.loading('正在准备下载，请稍候...', 0)
+  // 走浏览器原生下载，不再 fetch+blob（大文件会因内存压力中断留下 .crdownload）
+  const handleDownload = async (fileId: number) => {
     try {
-      const res = await fetch(`/api/files/download/${fileId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
-      if (!res.ok) throw new Error('下载失败')
-      const blob = await res.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = fileName; a.click()
-      window.URL.revokeObjectURL(url)
-      hide(); message.success('下载成功')
-    } catch (e: any) { hide(); message.error(e.message || '下载失败') }
+      await downloadFile(fileId)
+      messageApi.success('已开始下载，请查看浏览器下载列表')
+    } catch (e: any) {
+      messageApi.error(e?.message || '下载失败')
+    }
+  }
+
+  // 批量下载：服务端流式打 zip
+  const handleBatchDownload = async (fileIds: number[]) => {
+    if (!fileIds.length) return
+    const hide = messageApi.loading('正在准备打包，请稍候...', 0)
+    try {
+      const r = await downloadFilesAsZip(fileIds)
+      hide()
+      if (r.skipped > 0) {
+        messageApi.warning(`已开始下载 ${r.included} 个文件，${r.skipped} 个因无权限被跳过`)
+      } else {
+        messageApi.success(`已开始打包下载 ${r.included} 个文件，请查看浏览器下载列表`)
+      }
+    } catch (e: any) {
+      hide()
+      messageApi.error(e?.message || '批量下载失败')
+    }
   }
 
   const handleRenameFile = (file: any) => {
@@ -676,6 +687,7 @@ export default function SpaceDetail() {
           <div style={{ marginBottom: 12 }}>
             <Space wrap>
               <Text type="secondary">已选 {batchCount} 个文件</Text>
+              <Button type="primary" icon={<DownloadOutlined />} onClick={() => handleBatchDownload(selectedRowKeys as number[])}>批量下载</Button>
               <Button icon={<FolderOpenOutlined />} onClick={handleBatchMove}>批量移动</Button>
               <Popconfirm title={`确定将选中的 ${batchCount} 个文件移至回收站吗？`} okType="danger" onConfirm={handleBatchDelete}>
                 <Button danger icon={<DeleteOutlined />}>批量删除</Button>

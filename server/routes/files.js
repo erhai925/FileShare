@@ -674,6 +674,200 @@ router.get('/download/:fileId', authenticateOrDownloadToken, async (req, res) =>
   }
 });
 
+/* ------------------------------------------------------------------ *
+ * 批量下载（打包 zip）
+ *
+ * 与单文件一致，走「先换令牌、再由浏览器原生下载」两步：
+ * 浏览器发起的下载请求带不上 Authorization 头，故先用已登录身份换取一次性
+ * 令牌，再把令牌放在 URL 上。令牌复用 global.downloadTokens，但存的是
+ * fileIds 数组（单文件存 fileId），由各自的鉴权函数分别识别。
+ * ------------------------------------------------------------------ */
+
+/** 复用单文件下载令牌的存储与清理器，避免重复创建定时器 */
+function ensureDownloadTokenStore() {
+  if (!global.downloadTokens) {
+    global.downloadTokens = new Map();
+    setInterval(() => {
+      const now = Date.now();
+      for (const [k, v] of global.downloadTokens) {
+        if (now > v.expiresAt) global.downloadTokens.delete(k);
+      }
+    }, 10 * 60 * 1000).unref();
+  }
+}
+
+/** 校验用户对单个文件是否有读权限（与 /download/:fileId 内的判定保持一致） */
+async function canReadFile(userId, file) {
+  let ok = await checkPermission(userId, 'file', file.id, 'read');
+  if (!ok && file.space_id) {
+    ok = await checkPermission(userId, 'space', file.space_id, 'read');
+    if (!ok) {
+      const space = await db.get('SELECT owner_id FROM spaces WHERE id = ?', [file.space_id]);
+      if (space && space.owner_id === userId) ok = true;
+    }
+  }
+  return ok;
+}
+
+// 生成批量下载令牌：此处一次性校验全部文件权限，下载时不再逐个校验
+router.post('/batch-download-token', authenticate, async (req, res) => {
+  try {
+    const { fileIds } = req.body;
+    if (!Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ success: false, message: '请选择要下载的文件' });
+    }
+    if (fileIds.length > 500) {
+      return res.status(400).json({ success: false, message: '单次最多打包 500 个文件' });
+    }
+
+    const ids = [...new Set(fileIds.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (ids.length === 0) {
+      return res.status(400).json({ success: false, message: '文件 ID 无效' });
+    }
+
+    const placeholders = ids.map(() => '?').join(',');
+    const files = await db.query(
+      `SELECT id, original_name, file_path, space_id FROM files
+       WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+      ids
+    );
+    if (files.length === 0) {
+      return res.status(404).json({ success: false, message: '所选文件均不存在或已删除' });
+    }
+
+    // 逐个校验读权限，无权限的直接剔除而非整批失败
+    const allowed = [];
+    for (const f of files) {
+      if (await canReadFile(req.user.id, f)) allowed.push(f.id);
+    }
+    if (allowed.length === 0) {
+      return res.status(403).json({ success: false, message: '所选文件均无下载权限' });
+    }
+
+    ensureDownloadTokenStore();
+    const raw = generateToken(24);
+    global.downloadTokens.set(raw, {
+      fileIds: allowed,
+      userId: req.user.id,
+      expiresAt: Date.now() + 60 * 60 * 1000 // 1 小时
+    });
+
+    res.json({
+      success: true,
+      data: {
+        token: raw,
+        expiresIn: 3600,
+        total: ids.length,
+        included: allowed.length,
+        // 请求数与实际可打包数不一致时，前端据此提示用户
+        skipped: ids.length - allowed.length
+      }
+    });
+  } catch (err) {
+    console.error('生成批量下载令牌失败:', err);
+    res.status(500).json({ success: false, message: '生成批量下载链接失败' });
+  }
+});
+
+// 批量下载：流式打 zip，服务端不落临时文件、不整包进内存
+router.get('/batch-download', async (req, res) => {
+  const { token } = req.query;
+  if (!token || typeof token !== 'string' || !global.downloadTokens) {
+    return res.status(401).json({ success: false, message: '下载链接无效或已过期' });
+  }
+  const info = global.downloadTokens.get(token);
+  if (!info || !Array.isArray(info.fileIds) || Date.now() > info.expiresAt) {
+    if (info) global.downloadTokens.delete(token);
+    return res.status(401).json({ success: false, message: '下载链接无效或已过期' });
+  }
+  // 一次性令牌：取出即失效，避免链接被转发后反复下载
+  global.downloadTokens.delete(token);
+
+  try {
+    const encMode = getEncryptionMode();
+    const isPlainMode = !encMode || encMode === 'none' || encMode === 'plain';
+    if (!isPlainMode) {
+      // 加密模式下需逐个解密后再入包，与明文流式路径差异较大，暂不支持
+      return res.status(400).json({
+        success: false,
+        message: '当前为加密存储模式，暂不支持批量打包下载，请逐个下载'
+      });
+    }
+
+    const placeholders = info.fileIds.map(() => '?').join(',');
+    const files = await db.query(
+      `SELECT id, original_name, file_path FROM files
+       WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+      info.fileIds
+    );
+    if (files.length === 0) {
+      return res.status(404).json({ success: false, message: '所选文件均不存在或已删除' });
+    }
+
+    const archiver = require('archiver');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+    res.setHeader('Content-Type', 'application/zip');
+    setAttachmentDisposition(res, `文件打包-${stamp}.zip`);
+    // zip 为边压边发，总长度无法预先得知，故不设 Content-Length（响应走 chunked）
+
+    const archive = archiver('zip', { zlib: { level: 1 } }); // level 1：内网带宽充足，优先速度
+    archive.on('warning', (err) => console.warn('打包告警:', err && err.message));
+    archive.on('error', (err) => {
+      console.error('打包失败:', err);
+      // 头已发出，无法再改状态码，只能中断连接让浏览器判定下载失败
+      res.destroy();
+    });
+    archive.pipe(res);
+    // 客户端中途取消时立即停止读盘，避免继续空转
+    res.on('close', () => archive.abort());
+
+    const usedNames = new Map();
+    let added = 0;
+    for (const f of files) {
+      const resolved = await resolveFilePath(f);
+      if (!resolved) {
+        console.warn(`批量下载跳过缺失文件: id=${f.id} ${f.original_name}`);
+        continue;
+      }
+      // zip 内同名文件会互相覆盖，重名的追加 (2)、(3) 后缀
+      let entryName = f.original_name;
+      const seen = usedNames.get(entryName);
+      if (seen) {
+        const ext = path.extname(entryName);
+        const base = path.basename(entryName, ext);
+        usedNames.set(entryName, seen + 1);
+        entryName = `${base} (${seen + 1})${ext}`;
+      } else {
+        usedNames.set(entryName, 1);
+      }
+      archive.file(resolved, { name: entryName });
+      added++;
+    }
+
+    if (added === 0) {
+      archive.abort();
+      return res.status(404).json({ success: false, message: '所选文件在存储中均已丢失' });
+    }
+
+    await logOperation(info.userId, 'batch_download', 'file', null, {
+      fileCount: added,
+      fileIds: files.map((f) => f.id)
+    }, req);
+    for (const f of files) {
+      db.run('UPDATE files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = ?', [f.id]).catch(() => {});
+    }
+
+    await archive.finalize();
+  } catch (error) {
+    console.error('批量下载失败:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: '批量下载失败' });
+    } else {
+      res.destroy();
+    }
+  }
+});
+
 // 获取文件列表
 router.get('/list', authenticate, async (req, res) => {
   try {

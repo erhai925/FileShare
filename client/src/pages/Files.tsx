@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { App, Table, Button, Upload, Space, Input, message, Modal, Form, Select, Popconfirm } from 'antd'
-import { UploadOutlined, SearchOutlined, FolderOutlined, DeleteOutlined } from '@ant-design/icons'
+import { UploadOutlined, SearchOutlined, FolderOutlined, DeleteOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { useAuthStore } from '../stores/authStore'
 import api from '../services/api'
 import FilePreview from '../components/FilePreview'
 import FileActions from '../components/FileActions'
 import ChunkUpload from '../components/ChunkUpload'
 import { formatDateTime } from '../utils/date'
+import { downloadFile, downloadFilesAsZip } from '../utils/download'
 import {
   createBatchUploadModeAsker, LARGE_FILE_THRESHOLD_BYTES,
   inflightKey, beginInflight, endInflight, reportUploadProgress, finishUploadProgress,
@@ -19,26 +19,6 @@ import type { UploadProps } from 'antd'
 const { Option } = Select
 /** 根目录在 Select 中用空字符串表示，避免 antd 的 value 不能为 null 的警告 */
 const ROOT_FOLDER_VALUE = ''
-
-// File System Access API 类型定义
-interface FileSystemFileHandle {
-  createWritable(): Promise<FileSystemWritableStream>
-}
-
-interface FileSystemWritableStream {
-  write(data: Blob): Promise<void>
-  close(): Promise<void>
-}
-
-interface WindowWithFileSystem extends Window {
-  showSaveFilePicker?(options: {
-    suggestedName?: string
-    types?: Array<{
-      description: string
-      accept: Record<string, string[]>
-    }>
-  }): Promise<FileSystemFileHandle>
-}
 
 export default function Files() {
   const { message: messageApi, modal: modalApi } = App.useApp()
@@ -66,7 +46,6 @@ export default function Files() {
   const [chunkUploadFolderId, setChunkUploadFolderId] = useState<number | undefined>(undefined)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { token } = useAuthStore()
   
   // 防抖处理：延迟500ms更新搜索关键词
   useEffect(() => {
@@ -113,81 +92,15 @@ export default function Files() {
     })
   })
 
-  // 下载文件（支持选择保存路径）
-  const handleDownload = async (fileId: number, fileName: string) => {
-    const hide = messageApi.loading('正在准备下载，请稍候...', 0)
+  // 下载文件：走浏览器原生下载，不再 fetch+blob（大文件会因内存压力中断留下 .crdownload）
+  const handleDownload = async (fileId: number) => {
     try {
-      const response = await fetch(`/api/files/download/${fileId}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        hide()
-        messageApi.error(error.message || '下载失败')
-        return
-      }
-
-      // 获取文件blob
-      const blob = await response.blob()
-      
-      // 检查是否支持 File System Access API（现代浏览器）
-      const win = window as WindowWithFileSystem
-      if (win.showSaveFilePicker) {
-        try {
-          // 使用 File System Access API 让用户选择保存位置
-          const fileHandle = await win.showSaveFilePicker({
-            suggestedName: fileName,
-            types: [{
-              description: '文件',
-              accept: {
-                'application/octet-stream': ['.*']
-              }
-            }]
-          })
-          
-          // 写入文件
-          const writable = await fileHandle.createWritable()
-          await writable.write(blob)
-          await writable.close()
-          
-          hide()
-          messageApi.success('文件保存成功')
-        } catch (saveError: any) {
-          // 用户取消选择，不显示错误
-          if (saveError.name !== 'AbortError' && saveError.name !== 'NotAllowedError') {
-            console.error('保存文件失败:', saveError)
-            hide()
-            downloadWithFallback(blob, fileName)
-          } else {
-            hide()
-          }
-        }
-      } else {
-        hide()
-        downloadWithFallback(blob, fileName)
-      }
+      await downloadFile(fileId)
+      messageApi.success('已开始下载，请查看浏览器下载列表')
     } catch (error: any) {
       console.error('下载错误:', error)
-      hide()
-      messageApi.error(error.message || '下载失败')
+      messageApi.error(error?.message || '下载失败')
     }
-  }
-
-  // 传统下载方式（回退方案，调用时 loading 已由调用方关闭）
-  const downloadWithFallback = (blob: Blob, fileName: string) => {
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = fileName
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-    messageApi.success('文件下载成功（已保存到浏览器默认下载文件夹）')
   }
 
   // 删除文件
@@ -248,6 +161,24 @@ export default function Files() {
       queryClient.invalidateQueries({ queryKey: ['files'] })
     } catch (error: any) {
       message.error(error.message || '移动失败')
+    }
+  }
+
+  // 批量下载：服务端流式打 zip
+  const handleBatchDownload = async () => {
+    if (selectedRowKeys.length === 0) return
+    const hide = messageApi.loading('正在准备打包，请稍候...', 0)
+    try {
+      const r = await downloadFilesAsZip(selectedRowKeys as number[])
+      hide()
+      if (r.skipped > 0) {
+        messageApi.warning(`已开始下载 ${r.included} 个文件，${r.skipped} 个因无权限被跳过`)
+      } else {
+        messageApi.success(`已开始打包下载 ${r.included} 个文件，请查看浏览器下载列表`)
+      }
+    } catch (error: any) {
+      hide()
+      messageApi.error(error?.message || '批量下载失败')
     }
   }
 
@@ -502,6 +433,7 @@ export default function Files() {
             {selectedRowKeys.length > 0 && (
               <Space>
                 <span style={{ color: 'var(--text-secondary)' }}>已选 {selectedRowKeys.length} 个文件</span>
+                <Button type="primary" icon={<DownloadOutlined />} onClick={handleBatchDownload}>批量下载</Button>
                 <Button type="default" icon={<FolderOutlined />} onClick={handleBatchMove}>批量移动</Button>
                 <Popconfirm
                   title={`确定将选中的 ${selectedRowKeys.length} 个文件移至回收站吗？`}
